@@ -109,6 +109,43 @@ export const simulatedTrades = pgTable(
   }),
 );
 
+export const marketRegimeData = pgTable(
+  "market_regime_data",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    marketId: text("market_id").notNull(),
+    slug: text("slug"),
+    windowType: text("window_type").notNull(),
+    windowStart: timestamp("window_start").notNull(),
+    windowEnd: timestamp("window_end").notNull(),
+
+    // BTC over the window, measured from our own tick history.
+    btcStartPrice: decimal("btc_start_price", { precision: 18, scale: 2 }),
+    btcEndPrice: decimal("btc_end_price", { precision: 18, scale: 2 }),
+    btcHighPrice: decimal("btc_high_price", { precision: 18, scale: 2 }),
+    btcLowPrice: decimal("btc_low_price", { precision: 18, scale: 2 }),
+    /** Realized per-second volatility over the window, in $/s. */
+    btcSigmaPerSec: decimal("btc_sigma_per_sec", { precision: 18, scale: 8 }),
+    /** Times BTC crossed the start price — how choppy the window was. */
+    btcStrikeCrossings: integer("btc_strike_crossings"),
+    /** Ticks the measurements above are based on; low values mean low trust. */
+    btcTickCount: integer("btc_tick_count"),
+
+    winningOutcome: text("winning_outcome"),
+    tradeTaken: boolean("trade_taken").notNull(),
+    /** WIN or LOSS, null when no trade was taken. */
+    outcome: text("outcome"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    marketIdIdx: uniqueIndex("mrd_market_id_idx").on(table.marketId),
+    windowEndIdx: index("mrd_window_end_idx").on(table.windowEnd),
+  }),
+);
+
 export const auditLogs = pgTable(
   "audit_log",
   {

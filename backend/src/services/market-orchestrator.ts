@@ -31,6 +31,7 @@ import {
   calculateEarlyExitPnl,
 } from "./execution-simulator.js";
 import { getBtcPriceWatcher, BtcPriceWatcher } from "./btc-price-watcher.js";
+import { recordCompletedMarket } from "./market-recorder.js";
 import { marketNow } from "./market-clock.js";
 import { getPolymarketClient, PolymarketClient } from "./polymarket-client.js";
 import { PortfolioManager } from "./portfolio-manager.js";
@@ -58,6 +59,8 @@ interface ActiveMarketState {
   lastPrices: Record<string, { bid: number; ask: number }>;
   subscribedWs: boolean;
   resolved: boolean;
+  /** Set once the oracle decides; recorded with the completed-window data. */
+  winningOutcome: string | null;
   rawMarket: any;
 }
 
@@ -507,6 +510,7 @@ export class MarketOrchestrator extends EventEmitter {
       lastPrices: {},
       subscribedWs: false,
       resolved: false,
+      winningOutcome: null,
       rawMarket: market,
     };
 
@@ -680,7 +684,8 @@ export class MarketOrchestrator extends EventEmitter {
         this.strategyEngine.clearEvaluated(opp.tokenId);
         return;
       }
-      const bestAskPrice = this.wsWatcher.getBestAsk(opp.tokenId) ?? opp.bestAsk;
+      const bestAskPrice =
+        this.wsWatcher.getBestAsk(opp.tokenId) ?? opp.bestAsk;
 
       const openPositionsValue = this.computeOpenPositionsValue();
       const positionBudget =
@@ -808,7 +813,8 @@ export class MarketOrchestrator extends EventEmitter {
         fees: execution.fees,
         actualCost,
         marketEndDate: market?.endDate ?? new Date(),
-        minBid: this.wsWatcher.getBestBid(opp.tokenId) ?? execution.averagePrice,
+        minBid:
+          this.wsWatcher.getBestBid(opp.tokenId) ?? execution.averagePrice,
       });
 
       this.scheduleSettlementWatch(opp.marketId);
@@ -1061,6 +1067,9 @@ export class MarketOrchestrator extends EventEmitter {
     winningTokenId: string,
     winningOutcome: string,
   ): Promise<void> {
+    const marketState = this.activeMarkets.get(marketId);
+    if (marketState) marketState.winningOutcome = winningOutcome;
+
     for (const [tradeId, pos] of this.openPositions) {
       if (pos.marketId !== marketId) continue;
 
@@ -1187,9 +1196,7 @@ export class MarketOrchestrator extends EventEmitter {
         fees: parseFloat(trade.entryFees ?? "0"),
         actualCost: parseFloat(trade.actualCost ?? "0"),
         marketEndDate: marketEndDate ? new Date(marketEndDate) : new Date(),
-        minBid: parseFloat(
-          trade.minPriceDuringPosition ?? trade.entryPrice,
-        ),
+        minBid: parseFloat(trade.minPriceDuringPosition ?? trade.entryPrice),
       });
 
       if (trade.marketId) this.scheduleSettlementWatch(trade.marketId);
@@ -1269,6 +1276,7 @@ export class MarketOrchestrator extends EventEmitter {
         lastPrices: {},
         subscribedWs: false,
         resolved: false,
+        winningOutcome: null,
         rawMarket: row.metadata,
       };
 
@@ -1348,6 +1356,21 @@ export class MarketOrchestrator extends EventEmitter {
 
     // Never clean up a market that still has open positions.
     if (this.hasOpenPositionsForMarket(marketId)) return;
+
+    recordCompletedMarket(
+      {
+        marketId,
+        slug: state.slug,
+        windowType: getConfig().strategy.marketWindow,
+        windowStart: new Date(state.endDate.getTime() - this.windowDurationMs),
+        windowEnd: state.endDate,
+        btcStartPrice: state.btcPriceAtWindowStart,
+        winningOutcome: state.winningOutcome,
+      },
+      this.btcWatcher,
+    ).catch((err) =>
+      logger.error({ err, marketId }, "Failed to record market window data"),
+    );
 
     if (state.subscribedWs) {
       this.wsWatcher.unsubscribe([state.yesTokenId, state.noTokenId]);

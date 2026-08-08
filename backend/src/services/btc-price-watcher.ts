@@ -135,6 +135,16 @@ export class BtcPriceWatcher extends EventEmitter {
     return null;
   }
 
+  /** Ticks stamped within [fromMs, toMs], ascending. Empty once pruned past. */
+  getHistoryBetween(
+    fromMs: number,
+    toMs: number,
+  ): Array<{ price: number; timestamp: number }> {
+    return this.priceHistory.filter(
+      (t) => t.timestamp >= fromMs && t.timestamp <= toMs,
+    );
+  }
+
   getOldestHistoryTimestamp(): number | null {
     return this.priceHistory.length > 0
       ? (this.priceHistory[0]?.timestamp ?? null)

@@ -72,6 +72,67 @@ export async function insertMarketIfNew(
   return result.length > 0;
 }
 
+/** Insert the completed-window record. No-op if the market was already recorded. */
+export async function insertMarketRegimeData(data: {
+  marketId: string;
+  slug: string | null;
+  windowType: string;
+  windowStart: Date;
+  windowEnd: Date;
+  btcStartPrice: number | null;
+  btcEndPrice: number | null;
+  btcHighPrice: number | null;
+  btcLowPrice: number | null;
+  btcSigmaPerSec: number | null;
+  btcStrikeCrossings: number | null;
+  btcTickCount: number;
+  winningOutcome: string | null;
+  tradeTaken: boolean;
+  outcome: "WIN" | "LOSS" | null;
+}): Promise<boolean> {
+  const database = getDb();
+  const result = await database
+    .insert(schema.marketRegimeData)
+    .values({
+      marketId: data.marketId,
+      slug: data.slug,
+      windowType: data.windowType,
+      windowStart: data.windowStart,
+      windowEnd: data.windowEnd,
+      btcStartPrice: data.btcStartPrice?.toString() ?? null,
+      btcEndPrice: data.btcEndPrice?.toString() ?? null,
+      btcHighPrice: data.btcHighPrice?.toString() ?? null,
+      btcLowPrice: data.btcLowPrice?.toString() ?? null,
+      btcSigmaPerSec: data.btcSigmaPerSec?.toString() ?? null,
+      btcStrikeCrossings: data.btcStrikeCrossings,
+      btcTickCount: data.btcTickCount,
+      winningOutcome: data.winningOutcome,
+      tradeTaken: data.tradeTaken,
+      outcome: data.outcome,
+    })
+    .onConflictDoNothing({ target: schema.marketRegimeData.marketId })
+    .returning({ id: schema.marketRegimeData.id });
+
+  return result.length > 0;
+}
+
+/** Whether we traded a market, and the net result across its trades. */
+export async function getMarketTradeSummary(marketId: string): Promise<{
+  tradeTaken: boolean;
+  outcome: "WIN" | "LOSS" | null;
+}> {
+  const database = getDb();
+  const rows = await database
+    .select({ realizedPnl: schema.simulatedTrades.realizedPnl })
+    .from(schema.simulatedTrades)
+    .where(eq(schema.simulatedTrades.marketId, marketId));
+
+  if (rows.length === 0) return { tradeTaken: false, outcome: null };
+
+  const netPnl = rows.reduce((sum, r) => sum + parseFloat(r.realizedPnl ?? "0"), 0);
+  return { tradeTaken: true, outcome: netPnl > 0 ? "WIN" : "LOSS" };
+}
+
 export async function loadOpenTradesWithMarkets() {
   const database = getDb();
   const rows = await database
