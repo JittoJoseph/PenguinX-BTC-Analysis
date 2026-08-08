@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { createModuleLogger } from "../utils/logger.js";
 import { getConfig } from "../utils/config.js";
-import { WINDOW_CONFIGS } from "../types/index.js";
+import { WINDOW_CONFIGS, FIXED_POSITION_BUDGET_USD } from "../types/index.js";
 import {
   getDb,
   createSimulatedTrade,
@@ -117,10 +117,6 @@ export class MarketOrchestrator extends EventEmitter {
   private running = false;
   private paused = false;
   private cycleCount = 0;
-  private consecutiveLossCount = 0;
-  private pausedByRiskGuard = false;
-  private riskPauseTriggeredAt: number | null = null;
-  private riskAutoResumeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     super();
@@ -149,8 +145,7 @@ export class MarketOrchestrator extends EventEmitter {
         label: windowLabel,
         zEntryThreshold: config.strategy.zEntryThreshold,
         entryFromWindowSec: config.strategy.entryFromWindowSeconds,
-        budgetMaxUsd: config.portfolio.budgetMaxUsd,
-        startingCapital: config.portfolio.startingCapital,
+        positionBudgetUsd: FIXED_POSITION_BUDGET_USD,
       },
       "Starting market orchestrator",
     );
@@ -172,10 +167,6 @@ export class MarketOrchestrator extends EventEmitter {
     this.running = false;
     this.scanner.stop();
     this.wsWatcher.stop();
-    if (this.riskAutoResumeTimer) {
-      clearTimeout(this.riskAutoResumeTimer);
-      this.riskAutoResumeTimer = null;
-    }
 
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
@@ -194,10 +185,6 @@ export class MarketOrchestrator extends EventEmitter {
   pause(): void {
     this.paused = true;
     this.scanner.stop();
-    if (this.riskAutoResumeTimer) {
-      clearTimeout(this.riskAutoResumeTimer);
-      this.riskAutoResumeTimer = null;
-    }
 
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
@@ -210,13 +197,6 @@ export class MarketOrchestrator extends EventEmitter {
   async resume(): Promise<void> {
     if (!this.paused) return;
     this.paused = false;
-    this.pausedByRiskGuard = false;
-    this.riskPauseTriggeredAt = null;
-    this.consecutiveLossCount = 0;
-    if (this.riskAutoResumeTimer) {
-      clearTimeout(this.riskAutoResumeTimer);
-      this.riskAutoResumeTimer = null;
-    }
 
     // Reload portfolio in case an admin wiped and reset it.
     await this.portfolioManager.reload();
@@ -252,12 +232,6 @@ export class MarketOrchestrator extends EventEmitter {
       btcPriceAgeMs: this.btcWatcher.getPriceAgeMs(),
       btcPriceFresh: this.btcWatcher.isPriceFresh(),
       sigmaPerSec,
-      risk: {
-        consecutiveLossCount: this.consecutiveLossCount,
-        consecutiveLossPauseLimit: config.strategy.consecutiveLossPauseLimit,
-        pausedByRiskGuard: this.pausedByRiskGuard,
-        riskPauseTriggeredAt: this.riskPauseTriggeredAt,
-      },
     };
   }
 
@@ -687,17 +661,7 @@ export class MarketOrchestrator extends EventEmitter {
       const bestAskPrice =
         this.wsWatcher.getBestAsk(opp.tokenId) ?? opp.bestAsk;
 
-      const openPositionsValue = this.computeOpenPositionsValue();
-      const positionBudget =
-        this.portfolioManager.computePositionBudget(openPositionsValue);
-      const cash = this.portfolioManager.getCashBalance();
-      if (cash < positionBudget) {
-        logger.info(
-          { positionBudget, cash },
-          "Insufficient settled cash for position budget — skipping",
-        );
-        return;
-      }
+      const positionBudget = FIXED_POSITION_BUDGET_USD;
 
       const execution = simulateLimitBuy(
         orderbook,
@@ -746,14 +710,7 @@ export class MarketOrchestrator extends EventEmitter {
       }
 
       const actualCost = execution.netCost;
-      const deducted = await this.portfolioManager.deductCash(actualCost);
-      if (!deducted) {
-        logger.warn(
-          { actualCost, cash: this.portfolioManager.getCashBalance() },
-          "Insufficient cash for actual fill cost — skipping",
-        );
-        return;
-      }
+      await this.portfolioManager.deductCash(actualCost);
 
       const fillStatus = execution.isPartialFill ? "PARTIAL" : "FULL";
 
@@ -951,7 +908,6 @@ export class MarketOrchestrator extends EventEmitter {
           exitReason: "STOP_LOSS",
         },
       );
-      this.updateConsecutiveLossState(isWin);
       this.untrackPosition(tradeId);
 
       await logAudit(
@@ -1085,7 +1041,6 @@ export class MarketOrchestrator extends EventEmitter {
         (isWin ? 1 : 0).toFixed(6),
         { exitReason: "RESOLUTION" },
       );
-      this.updateConsecutiveLossState(isWin);
       this.untrackPosition(tradeId);
 
       await logAudit(
@@ -1121,64 +1076,6 @@ export class MarketOrchestrator extends EventEmitter {
 
     if (!this.hasOpenPositionsForMarket(marketId)) {
       this.cleanupMarket(marketId);
-    }
-  }
-
-  private updateConsecutiveLossState(isWin: boolean): void {
-    const config = getConfig();
-    const limit = config.strategy.consecutiveLossPauseLimit;
-    if (limit <= 0) return;
-
-    if (isWin) {
-      this.consecutiveLossCount = 0;
-      return;
-    }
-
-    this.consecutiveLossCount++;
-
-    if (this.consecutiveLossCount < limit) return;
-    if (this.paused) return;
-
-    this.pausedByRiskGuard = true;
-    this.riskPauseTriggeredAt = Date.now();
-    this.pause();
-
-    logAudit(
-      "error",
-      "RISK_GUARD",
-      `Auto-paused after ${this.consecutiveLossCount} consecutive losses`,
-      {
-        consecutiveLossCount: this.consecutiveLossCount,
-        pauseLimit: limit,
-        cashBalance: this.portfolioManager.getCashBalance(),
-      },
-    ).catch(() => {});
-
-    logger.error(
-      {
-        consecutiveLossCount: this.consecutiveLossCount,
-        pauseLimit: limit,
-      },
-      "🛑 Risk guard triggered — system auto-paused",
-    );
-
-    if (config.strategy.riskAutoResumeEnabled) {
-      if (this.riskAutoResumeTimer) {
-        clearTimeout(this.riskAutoResumeTimer);
-      }
-      this.riskAutoResumeTimer = setTimeout(() => {
-        this.resume()
-          .then(() => {
-            this.consecutiveLossCount = 0;
-            this.pausedByRiskGuard = false;
-            this.riskPauseTriggeredAt = null;
-            this.riskAutoResumeTimer = null;
-            logger.warn("Risk guard auto-resume executed");
-          })
-          .catch((err) =>
-            logger.error({ err }, "Risk guard auto-resume failed"),
-          );
-      }, config.strategy.riskAutoResumeCooldownMs);
     }
   }
 

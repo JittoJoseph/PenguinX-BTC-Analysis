@@ -7,6 +7,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { createModuleLogger } from "../utils/logger.js";
 import { getConfig } from "../utils/config.js";
+import { FIXED_POSITION_BUDGET_USD } from "../types/index.js";
 import { getDb, wipeAndResetPortfolio, getPortfolio } from "../db/client.js";
 import * as schema from "../db/schema.js";
 import { eq, desc, and } from "drizzle-orm";
@@ -457,12 +458,7 @@ export function buildLiveState() {
       stopLossEnabled: config.strategy.stopLossEnabled,
       stopLossDelta: config.strategy.stopLossDelta,
       startingCapital: config.portfolio.startingCapital,
-      budgetDivisor: config.portfolio.budgetDivisor,
-      budgetMinUsd: config.portfolio.budgetMinUsd,
-      budgetMaxUsd: config.portfolio.budgetMaxUsd,
-      consecutiveLossPauseLimit: config.strategy.consecutiveLossPauseLimit,
-      riskAutoResumeEnabled: config.strategy.riskAutoResumeEnabled,
-      riskAutoResumeCooldownMs: config.strategy.riskAutoResumeCooldownMs,
+      positionBudgetUsd: FIXED_POSITION_BUDGET_USD,
     },
     clock: getMarketClock().getStatus(),
     /** Market time. Clients derive their countdowns from this, never their own clock. */

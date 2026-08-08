@@ -71,6 +71,7 @@ export const CRYPTO_FEE = {
 
 // Protocol minimum order size in shares (CLOB orderbook `min_order_size`)
 export const POLYMARKET_MIN_ORDER_SIZE = 5;
+export const FIXED_POSITION_BUDGET_USD = 5;
 
 export const ConfigSchema = z.object({
   db: z.object({
@@ -78,9 +79,6 @@ export const ConfigSchema = z.object({
   }),
   portfolio: z.object({
     startingCapital: z.number().min(1).max(10_000_000),
-    budgetDivisor: z.number().min(1).max(100),
-    budgetMinUsd: z.number().min(1).max(10_000),
-    budgetMaxUsd: z.number().min(1).max(1_000_000),
   }),
   strategy: z.object({
     marketWindow: z.enum(MARKET_WINDOWS),
@@ -95,12 +93,6 @@ export const ConfigSchema = z.object({
     scanIntervalMs: z.number().min(10000),
     /** Simulated submit→match round-trip; the book keeps moving in between. */
     executionLatencyMs: z.number().min(0).max(5000),
-    consecutiveLossPauseLimit: z.number().min(0).max(20),
-    riskAutoResumeEnabled: z.boolean(),
-    riskAutoResumeCooldownMs: z
-      .number()
-      .min(10_000)
-      .max(24 * 60 * 60 * 1000),
   }),
   admin: z.object({
     password: z.string().min(1),

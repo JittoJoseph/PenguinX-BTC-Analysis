@@ -1,5 +1,6 @@
 import { createModuleLogger } from "./utils/logger.js";
 import { getConfig } from "./utils/config.js";
+import { FIXED_POSITION_BUDGET_USD } from "./types/index.js";
 import { connectDatabase } from "./db/client.js";
 import { getBtcPriceWatcher } from "./services/btc-price-watcher.js";
 import { getMarketClock } from "./services/market-clock.js";
@@ -23,7 +24,7 @@ async function main(): Promise<void> {
       entryFromWindowSec: config.strategy.entryFromWindowSeconds,
       sigmaWindowMs: config.strategy.sigmaWindowMs,
       startingCapital: config.portfolio.startingCapital,
-      budget: `pv/${config.portfolio.budgetDivisor} clamp[${config.portfolio.budgetMinUsd},${config.portfolio.budgetMaxUsd}]`,
+      positionBudget: `$${FIXED_POSITION_BUDGET_USD} fixed (simulation)`,
       stopLoss: config.strategy.stopLossEnabled
         ? `${(config.strategy.stopLossDelta * 100).toFixed(0)}¢ below entry`
         : "disabled",

@@ -323,31 +323,11 @@ export function DashboardPage() {
                   />
                   <StatRow
                     label="Position Budget"
-                    value={`pv/${stats.config.budgetDivisor} · $${stats.config.budgetMinUsd}–$${stats.config.budgetMaxUsd}`}
+                    value={`$${stats.config.positionBudgetUsd} fixed`}
                   />
                   <StatRow
                     label="Starting Capital"
                     value={`$${stats.config.startingCapital}`}
-                  />
-                  <StatRow
-                    label="Risk Guard"
-                    value={
-                      (stats.config.consecutiveLossPauseLimit ?? 0) > 0
-                        ? `${stats.config.consecutiveLossPauseLimit} losses`
-                        : "DISABLED"
-                    }
-                    accent={(stats.config.consecutiveLossPauseLimit ?? 0) > 0}
-                    warn={(stats.config.consecutiveLossPauseLimit ?? 0) <= 0}
-                  />
-                  <StatRow
-                    label="Auto Resume"
-                    value={
-                      stats.config.riskAutoResumeEnabled
-                        ? `${Math.round((stats.config.riskAutoResumeCooldownMs ?? 0) / 60000)}m cooldown`
-                        : "MANUAL"
-                    }
-                    accent={!!stats.config.riskAutoResumeEnabled}
-                    warn={!stats.config.riskAutoResumeEnabled}
                   />
                 </div>
               ) : (

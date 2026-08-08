@@ -123,14 +123,9 @@ export interface LiveState {
     stopLossEnabled: boolean;
     stopLossDelta: number;
     startingCapital: number;
+    positionBudgetUsd: number;
 
     entryPriceFloor: number;
-    budgetDivisor: number;
-    budgetMinUsd: number;
-    budgetMaxUsd: number;
-    consecutiveLossPauseLimit: number;
-    riskAutoResumeEnabled: boolean;
-    riskAutoResumeCooldownMs: number;
   };
   /** Backend's sync to Polymarket's clock; surfaced so drift is observable. */
   clock: {

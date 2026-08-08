@@ -34,9 +34,6 @@ export function loadConfig(): Config {
     },
     portfolio: {
       startingCapital: envNum("STARTING_CAPITAL", 100),
-      budgetDivisor: envNum("BUDGET_DIVISOR", 5),
-      budgetMinUsd: envNum("BUDGET_MIN_USD", 5),
-      budgetMaxUsd: envNum("BUDGET_MAX_USD", 20),
     },
     strategy: {
       marketWindow: env("MARKET_WINDOW", "5M"),
@@ -50,9 +47,6 @@ export function loadConfig(): Config {
       stopLossDelta: envNum("STOP_LOSS_DELTA", 0.2),
       executionLatencyMs: envNum("EXECUTION_LATENCY_MS", 250),
       scanIntervalMs: envNum("SCAN_INTERVAL_MS", 60_000),
-      consecutiveLossPauseLimit: envNum("CONSECUTIVE_LOSS_PAUSE_LIMIT", 3),
-      riskAutoResumeEnabled: envBool("RISK_AUTO_RESUME_ENABLED", false),
-      riskAutoResumeCooldownMs: envNum("RISK_AUTO_RESUME_COOLDOWN_MS", 300_000),
     },
     admin: {
       password: env("ADMIN_PASSWORD"),

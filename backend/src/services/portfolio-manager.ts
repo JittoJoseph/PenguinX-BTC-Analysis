@@ -49,34 +49,18 @@ export class PortfolioManager {
     return this.initialCapital.toNumber();
   }
 
-  computePositionBudget(openPositionsValue: number): number {
-    const { budgetDivisor, budgetMinUsd, budgetMaxUsd } = getConfig().portfolio;
-    const totalPortfolioValue = this.cashBalance.plus(openPositionsValue);
-    return Decimal.max(
-      budgetMinUsd,
-      Decimal.min(budgetMaxUsd, totalPortfolioValue.div(budgetDivisor)),
-    )
-      .toDP(8)
-      .toNumber();
-  }
-
-  /** Deduct fill cost after a buy; returns false if cash is insufficient. */
-  async deductCash(amount: number): Promise<boolean> {
-    const dec = new Decimal(amount);
-    if (dec.gt(this.cashBalance)) {
-      logger.error(
-        { requested: dec.toString(), available: this.cashBalance.toString() },
-        "Attempted to deduct more cash than available",
-      );
-      return false;
-    }
-    this.cashBalance = this.cashBalance.minus(dec);
+  /**
+   * Deduct fill cost after a buy. The research run never blocks a trade on
+   * available cash, so the balance is allowed to go negative — see
+   * FIXED_POSITION_BUDGET_USD.
+   */
+  async deductCash(amount: number): Promise<void> {
+    this.cashBalance = this.cashBalance.minus(new Decimal(amount));
     await updateCashBalance(this.cashBalance.toString());
     logger.debug(
-      { deducted: dec.toString(), remaining: this.cashBalance.toString() },
+      { deducted: amount, remaining: this.cashBalance.toString() },
       "Cash deducted",
     );
-    return true;
   }
 
   /** Add cash back after a position is resolved or exited. */
