@@ -11,36 +11,32 @@
     "db:studio": "drizzle-kit studio",
     "test": "vitest",
     "test:coverage": "vitest --coverage",
-    "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@types/express": "^4.17.21",
-    "@types/ws": "^8.5.10",
-    "axios": "^1.6.7",
-    "decimal.js": "^10.4.3",
-    "dotenv": "^16.4.4",
-    "drizzle-kit": "^0.31.10",
-    "drizzle-orm": "^0.45.1",
-    "express": "^4.18.2",
-    "pino": "^8.19.0",
-    "pino-pretty": "^10.3.1",
-    "postgres": "^3.4.8",
-    "typescript": "^5.3.3",
-    "ws": "^8.16.0",
-    "zod": "^3.22.4"
+    "axios": "^1.19.0",
+    "decimal.js": "^10.6.0",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "express": "^5.2.1",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3",
+    "postgres": "^3.4.9",
+    "ws": "^8.21.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20.11.19",
-    "@typescript-eslint/eslint-plugin": "^8.54.0",
-    "@typescript-eslint/parser": "^8.54.0",
-    "eslint": "^9.39.2",
-    "msw": "^2.2.1",
-    "tsx": "^4.7.1",
-    "vitest": "^4.0.18"
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.23.11",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
+  "packageManager": "pnpm@11.20.0",
   "engines": {
-    "node": ">=20.0.0 <21.0.0"
+    "node": ">=22.0.0"
   },
   "author": "",
   "license": "MIT"

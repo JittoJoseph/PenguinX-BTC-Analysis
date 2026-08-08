@@ -1,7 +1,7 @@
 import { Config, ConfigSchema } from "../types/index.js";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function env(key: string, defaultValue?: string): string {
   const value = process.env[key] ?? defaultValue;

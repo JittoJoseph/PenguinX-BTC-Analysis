@@ -147,7 +147,7 @@ export const GammaMarketSchema = z.object({
   category: z.string().nullable().optional(),
   resolutionSource: z.string().nullable().optional(),
   tags: z.array(GammaTagSchema).optional(),
-  events: z.array(z.record(z.unknown())).optional(),
+  events: z.array(z.record(z.string(), z.unknown())).optional(),
 });
 export type GammaMarket = z.infer<typeof GammaMarketSchema>;
 
