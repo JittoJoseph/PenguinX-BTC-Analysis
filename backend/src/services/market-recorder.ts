@@ -1,8 +1,17 @@
 import { createModuleLogger } from "../utils/logger.js";
-import { insertMarketRegimeData, getMarketTradeSummary } from "../db/client.js";
+import {
+  insertMarketRegimeData,
+  getMarketTradeSummary,
+  getUnresolvedMarketWindows,
+  setMarketWinningOutcome,
+} from "../db/client.js";
 import type { BtcPriceWatcher } from "./btc-price-watcher.js";
+import { getPolymarketClient, PolymarketClient } from "./polymarket-client.js";
 
 const logger = createModuleLogger("market-recorder");
+
+const BATCH = 40;
+let resolving = false;
 
 export interface CompletedMarket {
   marketId: string;
@@ -12,7 +21,6 @@ export interface CompletedMarket {
   windowEnd: Date;
   /** BTC price at window open — the value the market resolved against. */
   btcStartPrice: number | null;
-  winningOutcome: string | null;
 }
 
 interface BtcWindowStats {
@@ -82,11 +90,6 @@ export function summariseBtcWindow(
   };
 }
 
-/**
- * Record one completed market window. Idempotent via a unique index on
- * marketId, so repeated calls for the same market are no-ops. Purely
- * observational — never throws into the caller's path.
- */
 export async function recordCompletedMarket(
   market: CompletedMarket,
   btcWatcher: BtcPriceWatcher,
@@ -114,7 +117,6 @@ export async function recordCompletedMarket(
     btcSigmaPerSec: stats.sigmaPerSec,
     btcStrikeCrossings: stats.strikeCrossings,
     btcTickCount: stats.tickCount,
-    winningOutcome: market.winningOutcome,
     tradeTaken,
     outcome,
   });
@@ -124,12 +126,59 @@ export async function recordCompletedMarket(
       {
         marketId: market.marketId,
         slug: market.slug,
-        winner: market.winningOutcome,
         tradeTaken,
         outcome,
         ticks: stats.tickCount,
       },
       "Market window recorded",
     );
+  }
+}
+
+export async function resolvePendingOutcomes(): Promise<void> {
+  if (resolving) return;
+  resolving = true;
+  try {
+    const pending = await getUnresolvedMarketWindows(BATCH);
+    const marketIdBySlug = new Map(
+      pending.flatMap((p) => (p.slug ? [[p.slug, p.marketId] as const] : [])),
+    );
+    if (marketIdBySlug.size === 0) return;
+
+    const markets = await getPolymarketClient().getMarkets({
+      slug: [...marketIdBySlug.keys()],
+      closed: true,
+      limit: marketIdBySlug.size,
+    });
+
+    // At most two winners exist, so this is at most two UPDATE statements.
+    const idsByWinner = new Map<string, string[]>();
+    for (const m of markets) {
+      const marketId = m.slug ? marketIdBySlug.get(m.slug) : undefined;
+      if (!marketId) continue;
+      const idx = PolymarketClient.parseOutcomePrices(m).findIndex(
+        (p) => p === 1,
+      );
+      const winner = PolymarketClient.parseOutcomes(m)[idx];
+      if (!winner) continue;
+      const ids = idsByWinner.get(winner);
+      if (ids) ids.push(marketId);
+      else idsByWinner.set(winner, [marketId]);
+    }
+
+    let updated = 0;
+    for (const [winner, ids] of idsByWinner) {
+      await setMarketWinningOutcome(ids, winner);
+      updated += ids.length;
+    }
+
+    if (updated > 0) {
+      logger.info(
+        { updated, stillPending: marketIdBySlug.size - updated },
+        "Resolved market outcomes",
+      );
+    }
+  } finally {
+    resolving = false;
   }
 }

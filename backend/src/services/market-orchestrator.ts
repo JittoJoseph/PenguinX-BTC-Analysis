@@ -31,7 +31,10 @@ import {
   calculateEarlyExitPnl,
 } from "./execution-simulator.js";
 import { getBtcPriceWatcher, BtcPriceWatcher } from "./btc-price-watcher.js";
-import { recordCompletedMarket } from "./market-recorder.js";
+import {
+  recordCompletedMarket,
+  resolvePendingOutcomes,
+} from "./market-recorder.js";
 import { marketNow } from "./market-clock.js";
 import { getPolymarketClient, PolymarketClient } from "./polymarket-client.js";
 import { PortfolioManager } from "./portfolio-manager.js";
@@ -59,8 +62,6 @@ interface ActiveMarketState {
   lastPrices: Record<string, { bid: number; ask: number }>;
   subscribedWs: boolean;
   resolved: boolean;
-  /** Set once the oracle decides; recorded with the completed-window data. */
-  winningOutcome: string | null;
   rawMarket: any;
 }
 
@@ -484,7 +485,6 @@ export class MarketOrchestrator extends EventEmitter {
       lastPrices: {},
       subscribedWs: false,
       resolved: false,
-      winningOutcome: null,
       rawMarket: market,
     };
 
@@ -630,10 +630,6 @@ export class MarketOrchestrator extends EventEmitter {
     await this.settleMarketPositions(marketId, winningAssetId, winningOutcome);
   }
 
-  /**
-   * Fetch the live book, size and simulate a FAK buy against it, enforce the
-   * protocol min order size, then deduct cash and persist the resulting trade.
-   */
   private async onOpportunity(opp: MarketOpportunity): Promise<void> {
     if (this.paused) return;
 
@@ -841,11 +837,6 @@ export class MarketOrchestrator extends EventEmitter {
     }
   }
 
-  /**
-   * Mirrors a real engine: the order is submitted the moment the trigger is seen,
-   * then matched against the book as it stands when the order lands — the book
-   * keeps moving during the round-trip, so the fill is not the trigger price.
-   */
   private async submitStopLossExit(
     tradeId: string,
     pos: OpenPosition,
@@ -1023,9 +1014,6 @@ export class MarketOrchestrator extends EventEmitter {
     winningTokenId: string,
     winningOutcome: string,
   ): Promise<void> {
-    const marketState = this.activeMarkets.get(marketId);
-    if (marketState) marketState.winningOutcome = winningOutcome;
-
     for (const [tradeId, pos] of this.openPositions) {
       if (pos.marketId !== marketId) continue;
 
@@ -1107,10 +1095,6 @@ export class MarketOrchestrator extends EventEmitter {
     }
   }
 
-  /**
-   * Load active markets for the current window from the DB on startup, keeping
-   * only those still in the future or recently past with open positions.
-   */
   private async loadActiveMarkets(): Promise<void> {
     const config = getConfig();
     const db = getDb();
@@ -1173,7 +1157,6 @@ export class MarketOrchestrator extends EventEmitter {
         lastPrices: {},
         subscribedWs: false,
         resolved: false,
-        winningOutcome: null,
         rawMarket: row.metadata,
       };
 
@@ -1262,12 +1245,16 @@ export class MarketOrchestrator extends EventEmitter {
         windowStart: new Date(state.endDate.getTime() - this.windowDurationMs),
         windowEnd: state.endDate,
         btcStartPrice: state.btcPriceAtWindowStart,
-        winningOutcome: state.winningOutcome,
       },
       this.btcWatcher,
-    ).catch((err) =>
-      logger.error({ err, marketId }, "Failed to record market window data"),
-    );
+    )
+      .catch((err) =>
+        logger.error({ err, marketId }, "Failed to record market window data"),
+      )
+      .then(() => resolvePendingOutcomes())
+      .catch((err) =>
+        logger.error({ err }, "Failed to resolve pending market outcomes"),
+      );
 
     if (state.subscribedWs) {
       this.wsWatcher.unsubscribe([state.yesTokenId, state.noTokenId]);

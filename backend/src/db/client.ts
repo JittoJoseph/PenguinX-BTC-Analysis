@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { getConfig } from "../utils/config.js";
 import { createModuleLogger } from "../utils/logger.js";
 import * as schema from "./schema.js";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, isNull, sql } from "drizzle-orm";
 
 const logger = createModuleLogger("database");
 
@@ -86,7 +86,6 @@ export async function insertMarketRegimeData(data: {
   btcSigmaPerSec: number | null;
   btcStrikeCrossings: number | null;
   btcTickCount: number;
-  winningOutcome: string | null;
   tradeTaken: boolean;
   outcome: "WIN" | "LOSS" | null;
 }): Promise<boolean> {
@@ -106,7 +105,6 @@ export async function insertMarketRegimeData(data: {
       btcSigmaPerSec: data.btcSigmaPerSec?.toString() ?? null,
       btcStrikeCrossings: data.btcStrikeCrossings,
       btcTickCount: data.btcTickCount,
-      winningOutcome: data.winningOutcome,
       tradeTaken: data.tradeTaken,
       outcome: data.outcome,
     })
@@ -114,6 +112,31 @@ export async function insertMarketRegimeData(data: {
     .returning({ id: schema.marketRegimeData.id });
 
   return result.length > 0;
+}
+
+export async function getUnresolvedMarketWindows(limit: number) {
+  const database = getDb();
+  return database
+    .select({
+      marketId: schema.marketRegimeData.marketId,
+      slug: schema.marketRegimeData.slug,
+    })
+    .from(schema.marketRegimeData)
+    .where(isNull(schema.marketRegimeData.winningOutcome))
+    .orderBy(schema.marketRegimeData.windowEnd)
+    .limit(limit);
+}
+
+export async function setMarketWinningOutcome(
+  marketIds: string[],
+  winningOutcome: string,
+): Promise<void> {
+  if (marketIds.length === 0) return;
+  const database = getDb();
+  await database
+    .update(schema.marketRegimeData)
+    .set({ winningOutcome })
+    .where(inArray(schema.marketRegimeData.marketId, marketIds));
 }
 
 /** Whether we traded a market, and the net result across its trades. */
@@ -129,7 +152,10 @@ export async function getMarketTradeSummary(marketId: string): Promise<{
 
   if (rows.length === 0) return { tradeTaken: false, outcome: null };
 
-  const netPnl = rows.reduce((sum, r) => sum + parseFloat(r.realizedPnl ?? "0"), 0);
+  const netPnl = rows.reduce(
+    (sum, r) => sum + parseFloat(r.realizedPnl ?? "0"),
+    0,
+  );
   return { tradeTaken: true, outcome: netPnl > 0 ? "WIN" : "LOSS" };
 }
 

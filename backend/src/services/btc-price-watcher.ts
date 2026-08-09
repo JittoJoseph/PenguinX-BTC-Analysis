@@ -92,7 +92,7 @@ export class BtcPriceWatcher extends EventEmitter {
   }
 
   /** Last known BTC/USD price at or before `targetMs` (wall-clock ms).
-   *  Uses binary search — history is sorted ascending by insertion time. */
+   *  Uses binary search — history is sorted ascending by timestamp. */
   getPriceAt(targetMs: number): number | null {
     const h = this.priceHistory;
     if (h.length === 0) return null;
@@ -181,6 +181,35 @@ export class BtcPriceWatcher extends EventEmitter {
 
     if (count < 10 || elapsedSec <= 0) return null;
     return Math.sqrt(sumSq / elapsedSec);
+  }
+
+  private ingestBackfill(items: unknown[]): void {
+    const seen = new Set(this.priceHistory.map((t) => t.timestamp));
+    let added = 0;
+
+    for (const item of items) {
+      const { timestamp, value } = (item ?? {}) as Record<string, unknown>;
+      if (typeof timestamp !== "number" || typeof value !== "number") continue;
+      if (seen.has(timestamp)) continue;
+      seen.add(timestamp);
+      this.priceHistory.push({ price: value, timestamp });
+      added++;
+    }
+    if (added === 0) return;
+
+    this.priceHistory.sort((a, b) => a.timestamp - b.timestamp);
+
+    const newest = this.priceHistory[this.priceHistory.length - 1]!;
+    if (newest.timestamp > this.lastTimestamp) {
+      this.currentPrice = newest.price;
+      this.lastTimestamp = newest.timestamp;
+    }
+
+    logger.debug({ added }, "RTDS historical backfill merged");
+    this.emit("btcPriceUpdate", {
+      price: newest.price,
+      timestamp: newest.timestamp,
+    } satisfies BtcPriceData);
   }
 
   private setPrice(price: number): void {
@@ -322,16 +351,7 @@ export class BtcPriceWatcher extends EventEmitter {
             payload?.["symbol"] === "btc/usd" &&
             Array.isArray(payload["data"])
           ) {
-            for (const item of payload["data"]) {
-              if (
-                item &&
-                typeof item === "object" &&
-                typeof (item as any).timestamp === "number" &&
-                typeof (item as any).value === "number"
-              ) {
-                this.setPrice((item as any).value as number);
-              }
-            }
+            this.ingestBackfill(payload["data"]);
             return;
           }
         } catch (err: unknown) {
