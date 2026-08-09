@@ -4,7 +4,7 @@
 
 [![Backend Build](https://img.shields.io/github/checks-status/JittoJoseph/Strategic-Market-Engine/main?label=backend)](https://github.com/JittoJoseph/Strategic-Market-Engine/deployments)
 [![Frontend Build](https://img.shields.io/github/checks-status/JittoJoseph/Strategic-Market-Engine/main?label=frontend)](https://github.com/JittoJoseph/Strategic-Market-Engine/deployments)
-[![Health Check](https://img.shields.io/website?url=https://strategic-market-engine.onrender.com/ping&label=health)](https://strategic-market-engine.onrender.com/ping)
+[![Health Check](https://img.shields.io/website?url=https://market-api.jittojoseph.xyz/ping&label=health)](https://market-api.jittojoseph.xyz/ping)
 
 Volatility-barrier trading on Polymarket BTC 5-minute Up/Down markets. In the
 final seconds before a window closes, the outcome (Chainlink end-vs-open) is
