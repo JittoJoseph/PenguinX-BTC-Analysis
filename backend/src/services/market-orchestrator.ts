@@ -391,47 +391,24 @@ export class MarketOrchestrator extends EventEmitter {
       const windowStartMs = state.endDate.getTime() - this.windowDurationMs;
       if (nowMs < windowStartMs) continue;
 
-      let resolved: number | null = null;
-      let source: "historical" | "current" = "historical";
+      // Only the TWAP observation at the window start is the price to beat; with
+      // no fallback a mid-window start leaves it null and no entry is possible.
+      const price = this.btcWatcher.getPriceAt(windowStartMs);
+      if (price === null) continue;
 
-      // Skip the historical lookup unless the buffer predates the window start,
-      // otherwise getPriceAt() only returns null and logs noise.
-      const oldestHistoryMs = this.btcWatcher.getOldestHistoryTimestamp();
-      if (oldestHistoryMs !== null && oldestHistoryMs <= windowStartMs) {
-        resolved = this.btcWatcher.getPriceAt(windowStartMs);
-      }
-
-      if (resolved === null) {
-        const current = this.btcWatcher.getCurrentPrice();
-        if (current !== null) {
-          resolved = current.price;
-          source = "current";
-        }
-      }
-
-      if (resolved === null) continue;
-
-      state.btcPriceAtWindowStart = resolved;
+      state.btcPriceAtWindowStart = price;
       this.pendingBtcFills.delete(marketId);
 
-      logger.info(
-        {
-          marketId: state.marketId,
-          btcPrice: resolved,
-          source,
-          ...(source === "current" ? { windowStartMs } : {}),
-        },
-        source === "current"
-          ? "btcPriceAtWindowStart filled (current price — no history covering window start)"
-          : "btcPriceAtWindowStart filled (historical)",
-      );
-
-      // For relative Up/Down markets the window-start price is the strike.
       if (state.targetPrice === null) {
-        state.targetPrice = resolved;
-        this.strategyEngine.updateStrike(state.yesTokenId, resolved);
-        this.strategyEngine.updateStrike(state.noTokenId, resolved);
+        state.targetPrice = price;
+        this.strategyEngine.updateStrike(state.yesTokenId, price);
+        this.strategyEngine.updateStrike(state.noTokenId, price);
       }
+
+      logger.info(
+        { marketId, btcPriceAtWindowStart: price },
+        "Window start price set",
+      );
     }
   }
 
@@ -462,15 +439,6 @@ export class MarketOrchestrator extends EventEmitter {
       return;
     }
 
-    // Pre-fill if the window is already open; else the next BTC tick fills it.
-    const windowStartMs = endDate.getTime() - this.windowDurationMs;
-    const btcPriceAtWindowStart =
-      windowStartMs <= marketNow()
-        ? (this.btcWatcher.getPriceAt(windowStartMs) ??
-          this.btcWatcher.getCurrentPrice()?.price ??
-          null)
-        : null;
-
     const state: ActiveMarketState = {
       marketId: market.id,
       conditionId: market.conditionId ?? null,
@@ -479,8 +447,8 @@ export class MarketOrchestrator extends EventEmitter {
       question: market.question ?? "",
       slug: market.slug ?? null,
       endDate,
-      targetPrice: targetPrice ?? btcPriceAtWindowStart,
-      btcPriceAtWindowStart,
+      targetPrice,
+      btcPriceAtWindowStart: null,
       outcomes,
       lastPrices: {},
       subscribedWs: false,
@@ -489,19 +457,15 @@ export class MarketOrchestrator extends EventEmitter {
     };
 
     this.registerMarketState(state);
-    if (state.btcPriceAtWindowStart === null) {
-      this.pendingBtcFills.add(market.id);
-    }
+    this.pendingBtcFills.add(market.id);
 
-    // effectiveTargetPrice is null for relative Up/Down markets until it's filled.
-    const effectiveTargetPrice = targetPrice ?? btcPriceAtWindowStart;
     for (let i = 0; i < tokenIds.length; i++) {
       this.strategyEngine.registerMarket(
         market.id,
         tokenIds[i]!,
         outcomes[i] ?? `Outcome${i}`,
         endDate,
-        effectiveTargetPrice,
+        targetPrice,
       );
     }
 

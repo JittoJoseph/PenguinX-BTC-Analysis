@@ -8,15 +8,9 @@ import { marketNow } from "./market-clock.js";
 
 const logger = createModuleLogger("btc-price-watcher");
 
-/**
- * BTC/USD price watcher over the Polymarket RTDS WebSocket, subscribing to the
- * Chainlink feed. Ticks are stamped with market time so getPriceAt() can be
- * queried with market-time instants such as a window boundary.
- *
- * Staleness watchdog: the RTDS server can stop sending ticks while the OS-level
- * TCP connection stays OPEN, so a close event never fires. If no tick arrives
- * within STALE_THRESHOLD_MS we force-close and reconnect anyway.
- */
+/** 5m BTC markets settle on the Chainlink BTC/USD 30-second TWAP. */
+const RTDS_TWAP_TOPIC = "crypto_prices_twap_thirty";
+
 export class BtcPriceWatcher extends EventEmitter {
   private ws: WebSocket | null = null;
   private currentPrice: number | null = null;
@@ -145,22 +139,9 @@ export class BtcPriceWatcher extends EventEmitter {
     );
   }
 
-  getOldestHistoryTimestamp(): number | null {
-    return this.priceHistory.length > 0
-      ? (this.priceHistory[0]?.timestamp ?? null)
-      : null;
-  }
-
   isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }
-
-  /**
-   * BTC per-second realized volatility over the trailing `windowMs`, using the
-   * realized-variance estimator (robust to the Chainlink feed's irregular ticks):
-   *   sigma_per_sec = sqrt( Σ(Δprice)² / Σ(Δt_seconds) )
-   * Returns null when there is too little history for a stable estimate.
-   */
   getRealizedVol(windowMs: number): number | null {
     const cutoff = marketNow() - windowMs;
     const h = this.priceHistory;
@@ -183,43 +164,13 @@ export class BtcPriceWatcher extends EventEmitter {
     return Math.sqrt(sumSq / elapsedSec);
   }
 
-  private ingestBackfill(items: unknown[]): void {
-    const seen = new Set(this.priceHistory.map((t) => t.timestamp));
-    let added = 0;
+  private setPrice(price: number, observedAtMs: number): void {
+    this.lastPriceReceivedMs = marketNow();
+    if (observedAtMs < this.lastTimestamp) return;
 
-    for (const item of items) {
-      const { timestamp, value } = (item ?? {}) as Record<string, unknown>;
-      if (typeof timestamp !== "number" || typeof value !== "number") continue;
-      if (seen.has(timestamp)) continue;
-      seen.add(timestamp);
-      this.priceHistory.push({ price: value, timestamp });
-      added++;
-    }
-    if (added === 0) return;
-
-    this.priceHistory.sort((a, b) => a.timestamp - b.timestamp);
-
-    const newest = this.priceHistory[this.priceHistory.length - 1]!;
-    if (newest.timestamp > this.lastTimestamp) {
-      this.currentPrice = newest.price;
-      this.lastTimestamp = newest.timestamp;
-    }
-
-    logger.debug({ added }, "RTDS historical backfill merged");
-    this.emit("btcPriceUpdate", {
-      price: newest.price,
-      timestamp: newest.timestamp,
-    } satisfies BtcPriceData);
-  }
-
-  private setPrice(price: number): void {
-    // Market time, not the RTDS source timestamp: source stamps can lag real
-    // time, and this must share a base with window boundaries for getPriceAt().
-    const timestamp = marketNow();
     this.currentPrice = price;
-    this.lastTimestamp = timestamp;
-    this.lastPriceReceivedMs = timestamp;
-    this.priceHistory.push({ price, timestamp });
+    this.lastTimestamp = observedAtMs;
+    this.priceHistory.push({ price, timestamp: observedAtMs });
 
     this.ticksSinceLastPrune++;
     if (this.ticksSinceLastPrune >= BtcPriceWatcher.PRUNE_INTERVAL_TICKS) {
@@ -235,7 +186,10 @@ export class BtcPriceWatcher extends EventEmitter {
       if (pruneIdx > 0) this.priceHistory = this.priceHistory.slice(pruneIdx);
     }
 
-    this.emit("btcPriceUpdate", { price, timestamp } satisfies BtcPriceData);
+    this.emit("btcPriceUpdate", {
+      price,
+      timestamp: observedAtMs,
+    } satisfies BtcPriceData);
   }
 
   private startStalenessWatchdog(): void {
@@ -309,14 +263,14 @@ export class BtcPriceWatcher extends EventEmitter {
           action: "subscribe",
           subscriptions: [
             {
-              topic: "crypto_prices_chainlink",
-              type: "*",
+              topic: RTDS_TWAP_TOPIC,
+              type: "update",
               filters: '{"symbol":"btc/usd"}',
             },
           ],
         });
         this.ws!.send(subscribeMsg);
-        logger.debug("RTDS subscribed: crypto_prices_chainlink");
+        logger.debug({ topic: RTDS_TWAP_TOPIC }, "RTDS subscribed");
 
         // RTDS keepalive: send text "PING" every 5s per Polymarket docs.
         this.pingTimer = setInterval(() => {
@@ -332,28 +286,17 @@ export class BtcPriceWatcher extends EventEmitter {
           if (text === "PONG" || text === "pong") return;
 
           const msg = JSON.parse(text) as Record<string, unknown>;
-          const topic = msg["topic"] as string | undefined;
           const payload = msg["payload"] as Record<string, unknown> | undefined;
-
-          const isChainlink =
-            topic === "crypto_prices_chainlink" &&
-            payload?.["symbol"] === "btc/usd";
-
-          if (isChainlink && typeof payload?.["value"] === "number") {
-            this.setPrice(payload["value"] as number);
-            return;
-          }
-
-          // Historical backfill arrives on the crypto_prices topic with type="subscribe".
           if (
-            topic === "crypto_prices" &&
-            msg["type"] === "subscribe" &&
-            payload?.["symbol"] === "btc/usd" &&
-            Array.isArray(payload["data"])
+            msg["topic"] !== RTDS_TWAP_TOPIC ||
+            payload?.["symbol"] !== "btc/usd" ||
+            typeof payload["value"] !== "number" ||
+            typeof payload["timestamp"] !== "number"
           ) {
-            this.ingestBackfill(payload["data"]);
             return;
           }
+
+          this.setPrice(payload["value"], payload["timestamp"]);
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           logger.debug({ err: msg }, "RTDS message parse error");
