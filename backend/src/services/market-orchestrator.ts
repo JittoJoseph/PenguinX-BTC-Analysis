@@ -620,6 +620,7 @@ export class MarketOrchestrator extends EventEmitter {
       }
       const bestAskPrice =
         this.wsWatcher.getBestAsk(opp.tokenId) ?? opp.bestAsk;
+      const entryBid = this.wsWatcher.getBestBid(opp.tokenId) ?? opp.bestBid;
 
       const positionBudget = FIXED_POSITION_BUDGET_USD;
 
@@ -715,10 +716,10 @@ export class MarketOrchestrator extends EventEmitter {
         entryZ: opp.z,
         entrySigma: opp.sigmaPerSec,
         secondsToEnd: opp.secondsToEnd,
+        minPriceDuringPosition: entryBid.toFixed(6),
       });
       const tradeId = tradeRow!.id;
 
-      // Track open position
       const market = this.activeMarkets.get(opp.marketId);
       this.trackPosition({
         tradeId,
@@ -730,8 +731,7 @@ export class MarketOrchestrator extends EventEmitter {
         fees: execution.fees,
         actualCost,
         marketEndDate: market?.endDate ?? new Date(),
-        minBid:
-          this.wsWatcher.getBestBid(opp.tokenId) ?? execution.averagePrice,
+        minBid: entryBid,
       });
 
       this.scheduleSettlementWatch(opp.marketId);

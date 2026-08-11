@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { getConfig } from "../utils/config.js";
 import { createModuleLogger } from "../utils/logger.js";
 import * as schema from "./schema.js";
-import { eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 
 const logger = createModuleLogger("database");
 
@@ -194,6 +194,7 @@ export async function createSimulatedTrade(data: {
   entryZ?: number;
   entrySigma?: number;
   secondsToEnd?: number;
+  minPriceDuringPosition?: string;
 }) {
   const database = getDb();
   const result = await database
@@ -219,18 +220,28 @@ export async function createSimulatedTrade(data: {
       entryZ: data.entryZ?.toString() ?? null,
       entrySigma: data.entrySigma?.toString() ?? null,
       secondsToEnd: data.secondsToEnd?.toString() ?? null,
+      minPriceDuringPosition: data.minPriceDuringPosition ?? null,
       status: "OPEN",
     })
     .returning();
   return result[0];
 }
 
+/** Monotonic: concurrent unordered writes can never raise the recorded minimum. */
 export async function updateTradeMinPrice(id: string, minPrice: string) {
   const database = getDb();
   await database
     .update(schema.simulatedTrades)
     .set({ minPriceDuringPosition: minPrice, updatedAt: new Date() })
-    .where(eq(schema.simulatedTrades.id, id));
+    .where(
+      and(
+        eq(schema.simulatedTrades.id, id),
+        or(
+          isNull(schema.simulatedTrades.minPriceDuringPosition),
+          gt(schema.simulatedTrades.minPriceDuringPosition, minPrice),
+        ),
+      ),
+    );
 }
 
 export async function resolveTrade(
