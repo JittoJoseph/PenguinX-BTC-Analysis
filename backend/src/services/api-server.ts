@@ -7,7 +7,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { createModuleLogger } from "../utils/logger.js";
 import { getConfig } from "../utils/config.js";
-import { FIXED_POSITION_BUDGET_USD } from "../types/index.js";
+import { FIXED_POSITION_BUDGET_USD, WINDOW_CONFIG } from "../types/index.js";
 import { getDb, wipeAndResetPortfolio, getPortfolio } from "../db/client.js";
 import * as schema from "../db/schema.js";
 import { eq, desc, and } from "drizzle-orm";
@@ -199,7 +199,7 @@ export class ApiServer {
               conditionId: m.conditionId || "",
               slug: m.slug || "",
               question: m.question || "",
-              windowType: "5M",
+              windowType: WINDOW_CONFIG.category,
               category: "Crypto",
               endDate: m.endDate ? new Date(m.endDate).toISOString() : new Date().toISOString(),
               targetPrice: null,
@@ -441,22 +441,23 @@ export function buildLiveState() {
     orchestrator: orchestrator.getStats(),
     liveMarkets: orchestrator.getLiveMarkets(),
     openPositions: orchestrator.getOpenPositionSnapshots(),
-    btcPrice: btcWatcher.getCurrentPrice(),
+    btcPrice: btcWatcher.getCurrentTwap(),
     portfolio: {
       cashBalance: pm.getCashBalance(),
       initialCapital: pm.getInitialCapital(),
       openPositionsValue: orchestrator.computeOpenPositionsValue(),
     },
     config: {
-      marketWindow: config.strategy.marketWindow,
-      zEntryThreshold: config.strategy.zEntryThreshold,
-      entryPriceFloor: config.strategy.entryPriceFloor,
+      marketWindow: WINDOW_CONFIG.label,
+      twapLookbackSeconds: WINDOW_CONFIG.twapLookbackSeconds,
+      minEntryPrice: config.strategy.minEntryPrice,
       maxEntryPrice: config.strategy.maxEntryPrice,
-      entryFromWindowSeconds: config.strategy.entryFromWindowSeconds,
+      entryWindowOpenSeconds: config.strategy.entryWindowOpenSeconds,
+      entryWindowCloseSeconds: config.strategy.entryWindowCloseSeconds,
       sigmaWindowMs: config.strategy.sigmaWindowMs,
-      minEntryEdge: config.strategy.minEntryEdge,
-      stopLossEnabled: config.strategy.stopLossEnabled,
-      stopLossDelta: config.strategy.stopLossDelta,
+      minModelEdge: config.strategy.minModelEdge,
+      minSettlementSigmas: config.strategy.minSettlementSigmas,
+      stopLossFraction: config.strategy.stopLossFraction,
       startingCapital: config.portfolio.startingCapital,
       positionBudgetUsd: FIXED_POSITION_BUDGET_USD,
     },

@@ -21,7 +21,7 @@ import {
   simulateLimitBuy,
   simulateLimitSell,
   calculateWinProfit,
-  calculateEarlyExitPnl,
+  stopTriggerPrice,
   calculateFeePerShare,
   type ExecutionResult,
   type SellExecutionResult,
@@ -108,7 +108,6 @@ describe("simulateLimitBuy", () => {
   it("always applies crypto fee — fees > 0 at mid-range price", () => {
     const orderbook = makeOrderbook([{ price: "0.50", size: "100" }], []);
 
-    // At p=0.50 the fee = 0.25 × (0.5 × 0.5)^2 = 0.015625 per share
     const result = simulateLimitBuy(orderbook, 10, 0.5);
 
     expect(result.fees).toBeGreaterThan(0);
@@ -240,10 +239,14 @@ describe("simulateLimitSell", () => {
 });
 
 describe("calculateFeePerShare", () => {
-  it("returns near-zero fee at extreme prices", () => {
-    const fee97 = calculateFeePerShare(0.97);
-    expect(fee97).toBeLessThan(0.001);
-    expect(fee97).toBeGreaterThanOrEqual(0);
+  it("matches Polymarket's published 0.07·p·(1-p) taker fee", () => {
+    expect(calculateFeePerShare(0.5)).toBeCloseTo(0.0175, 4);
+    expect(calculateFeePerShare(0.7)).toBeCloseTo(0.0147, 4);
+    expect(calculateFeePerShare(0.97)).toBeCloseTo(0.002, 4);
+  });
+
+  it("is symmetric around 0.50", () => {
+    expect(calculateFeePerShare(0.3)).toBeCloseTo(calculateFeePerShare(0.7), 6);
   });
 
   it("returns peak fee near 0.50", () => {
@@ -275,20 +278,51 @@ describe("calculateWinProfit", () => {
   });
 });
 
-describe("calculateEarlyExitPnl", () => {
-  it("calculates partial loss for a below-entry early exit", () => {
-    const pnl = calculateEarlyExitPnl(0.95, 0.8, 10, 0.01, 0.005);
-    expect(pnl).toBeCloseTo(-1.515, 4);
+describe("stopTriggerPrice", () => {
+  it("holds risk per position constant across the entry band", () => {
+    for (const entry of [0.15, 0.3, 0.5, 0.75, 0.9]) {
+      const trigger = stopTriggerPrice(entry, 0.35);
+      expect((entry - trigger) / entry).toBeCloseTo(0.35, 9);
+    }
   });
 
-  it("calculates profit for a profitable early exit", () => {
-    const pnl = calculateEarlyExitPnl(0.5, 0.7, 10, 0.01, 0.01);
-    expect(pnl).toBeCloseTo(1.98, 4);
+  it("stays reachable at the cheapest allowed entry", () => {
+    const trigger = stopTriggerPrice(0.15, 0.35);
+    expect(trigger).toBeGreaterThan(0);
+    expect(trigger).toBeLessThan(0.15);
   });
 
-  it("an early exit loses less than holding a full loss", () => {
-    const fullLoss = -(0.95 * 10 + 0.01);
-    const earlyExit = calculateEarlyExitPnl(0.95, 0.8, 10, 0.01, 0.005);
-    expect(earlyExit).toBeGreaterThan(fullLoss);
+  it("widens in absolute cents as entry price rises", () => {
+    expect(0.9 - stopTriggerPrice(0.9, 0.35)).toBeGreaterThan(
+      0.3 - stopTriggerPrice(0.3, 0.35),
+    );
+  });
+});
+
+describe("stop-loss fill realism", () => {
+  const collapsed: ExecutableBook = {
+    bids: [
+      { price: "0.05", size: "3" },
+      { price: "0.02", size: "50" },
+    ],
+    asks: [],
+  };
+
+  it("walks a collapsed book to the bottom for a near-total loss", () => {
+    const sell = simulateLimitSell(collapsed, 10, 0);
+    expect(sell.totalSharesSold).toBe(10);
+    expect(sell.averagePrice).toBeLessThan(0.04);
+  });
+
+  it("sells everything it can rather than refusing a bad price", () => {
+    const thin: ExecutableBook = { bids: [{ price: "0.01", size: "4" }], asks: [] };
+    const sell = simulateLimitSell(thin, 10, 0);
+    expect(sell.totalSharesSold).toBe(4);
+    expect(sell.isPartialFill).toBe(true);
+  });
+
+  it("reports no fill only when the bid side is empty", () => {
+    const sell = simulateLimitSell({ bids: [], asks: [] }, 10, 0);
+    expect(sell.totalSharesSold).toBe(0);
   });
 });

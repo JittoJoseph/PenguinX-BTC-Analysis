@@ -47,7 +47,7 @@ export function TradesTable({
           No trades yet
         </div>
         <div className="text-xs text-muted-foreground/50 font-mono">
-          Waiting for volatility-barrier opportunities…
+          Waiting for TWAP roll-off opportunities…
         </div>
       </div>
     );

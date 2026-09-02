@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { getConfig } from "../utils/config.js";
 import { createModuleLogger } from "../utils/logger.js";
 import * as schema from "./schema.js";
-import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 
 const logger = createModuleLogger("database");
 
@@ -72,93 +72,6 @@ export async function insertMarketIfNew(
   return result.length > 0;
 }
 
-/** Insert the completed-window record. No-op if the market was already recorded. */
-export async function insertMarketRegimeData(data: {
-  marketId: string;
-  slug: string | null;
-  windowType: string;
-  windowStart: Date;
-  windowEnd: Date;
-  btcStartPrice: number | null;
-  btcEndPrice: number | null;
-  btcHighPrice: number | null;
-  btcLowPrice: number | null;
-  btcSigmaPerSec: number | null;
-  btcStrikeCrossings: number | null;
-  btcTickCount: number;
-  tradeTaken: boolean;
-  outcome: "WIN" | "LOSS" | null;
-}): Promise<boolean> {
-  const database = getDb();
-  const result = await database
-    .insert(schema.marketRegimeData)
-    .values({
-      marketId: data.marketId,
-      slug: data.slug,
-      windowType: data.windowType,
-      windowStart: data.windowStart,
-      windowEnd: data.windowEnd,
-      btcStartPrice: data.btcStartPrice?.toString() ?? null,
-      btcEndPrice: data.btcEndPrice?.toString() ?? null,
-      btcHighPrice: data.btcHighPrice?.toString() ?? null,
-      btcLowPrice: data.btcLowPrice?.toString() ?? null,
-      btcSigmaPerSec: data.btcSigmaPerSec?.toString() ?? null,
-      btcStrikeCrossings: data.btcStrikeCrossings,
-      btcTickCount: data.btcTickCount,
-      tradeTaken: data.tradeTaken,
-      outcome: data.outcome,
-    })
-    .onConflictDoNothing({ target: schema.marketRegimeData.marketId })
-    .returning({ id: schema.marketRegimeData.id });
-
-  return result.length > 0;
-}
-
-export async function getUnresolvedMarketWindows(limit: number) {
-  const database = getDb();
-  return database
-    .select({
-      marketId: schema.marketRegimeData.marketId,
-      slug: schema.marketRegimeData.slug,
-    })
-    .from(schema.marketRegimeData)
-    .where(isNull(schema.marketRegimeData.winningOutcome))
-    .orderBy(schema.marketRegimeData.windowEnd)
-    .limit(limit);
-}
-
-export async function setMarketWinningOutcome(
-  marketIds: string[],
-  winningOutcome: string,
-): Promise<void> {
-  if (marketIds.length === 0) return;
-  const database = getDb();
-  await database
-    .update(schema.marketRegimeData)
-    .set({ winningOutcome })
-    .where(inArray(schema.marketRegimeData.marketId, marketIds));
-}
-
-/** Whether we traded a market, and the net result across its trades. */
-export async function getMarketTradeSummary(marketId: string): Promise<{
-  tradeTaken: boolean;
-  outcome: "WIN" | "LOSS" | null;
-}> {
-  const database = getDb();
-  const rows = await database
-    .select({ realizedPnl: schema.simulatedTrades.realizedPnl })
-    .from(schema.simulatedTrades)
-    .where(eq(schema.simulatedTrades.marketId, marketId));
-
-  if (rows.length === 0) return { tradeTaken: false, outcome: null };
-
-  const netPnl = rows.reduce(
-    (sum, r) => sum + parseFloat(r.realizedPnl ?? "0"),
-    0,
-  );
-  return { tradeTaken: true, outcome: netPnl > 0 ? "WIN" : "LOSS" };
-}
-
 export async function loadOpenTradesWithMarkets() {
   const database = getDb();
   const rows = await database
@@ -188,11 +101,14 @@ export async function createSimulatedTrade(data: {
   actualCost: string;
   entryFees?: string;
   fillStatus?: string;
-  btcPriceAtEntry?: number;
-  btcTargetPrice?: number;
-  btcDistanceUsd?: number;
-  entryZ?: number;
-  entrySigma?: number;
+  twapAtEntry?: number;
+  rawAtEntry?: number;
+  strike?: number;
+  forecastSettlement?: number;
+  forecastMarginUsd?: number;
+  forecastSdUsd?: number;
+  modelProb?: number;
+  modelEdge?: number;
   secondsToEnd?: number;
   minPriceDuringPosition?: string;
 }) {
@@ -214,11 +130,14 @@ export async function createSimulatedTrade(data: {
       actualCost: data.actualCost,
       entryFees: data.entryFees ?? "0",
       fillStatus: data.fillStatus ?? "FULL",
-      btcPriceAtEntry: data.btcPriceAtEntry?.toString() ?? null,
-      btcTargetPrice: data.btcTargetPrice?.toString() ?? null,
-      btcDistanceUsd: data.btcDistanceUsd?.toString() ?? null,
-      entryZ: data.entryZ?.toString() ?? null,
-      entrySigma: data.entrySigma?.toString() ?? null,
+      twapAtEntry: data.twapAtEntry?.toString() ?? null,
+      rawAtEntry: data.rawAtEntry?.toString() ?? null,
+      strike: data.strike?.toString() ?? null,
+      forecastSettlement: data.forecastSettlement?.toString() ?? null,
+      forecastMarginUsd: data.forecastMarginUsd?.toString() ?? null,
+      forecastSdUsd: data.forecastSdUsd?.toString() ?? null,
+      modelProb: data.modelProb?.toString() ?? null,
+      modelEdge: data.modelEdge?.toString() ?? null,
       secondsToEnd: data.secondsToEnd?.toString() ?? null,
       minPriceDuringPosition: data.minPriceDuringPosition ?? null,
       status: "OPEN",

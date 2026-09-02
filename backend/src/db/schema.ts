@@ -72,15 +72,20 @@ export const simulatedTrades = pgTable(
     actualCost: decimal("actual_cost", { precision: 18, scale: 8 }).notNull(),
     entryFees: decimal("entry_fees", { precision: 18, scale: 8 }).default("0"),
     fillStatus: text("fill_status").default("FULL"),
-    btcPriceAtEntry: decimal("btc_price_at_entry", { precision: 18, scale: 2 }),
-    btcTargetPrice: decimal("btc_target_price", { precision: 18, scale: 2 }),
-    btcDistanceUsd: decimal("btc_distance_usd", {
-      precision: 10,
+    twapAtEntry: decimal("twap_at_entry", { precision: 18, scale: 2 }),
+    rawAtEntry: decimal("raw_at_entry", { precision: 18, scale: 2 }),
+    strike: decimal("strike", { precision: 18, scale: 2 }),
+    forecastSettlement: decimal("forecast_settlement", {
+      precision: 18,
+      scale: 2,
+    }),
+    forecastMarginUsd: decimal("forecast_margin_usd", {
+      precision: 12,
       scale: 4,
     }),
-    // z = signedDistance / (sigma·√secondsLeft); sigma in $/s
-    entryZ: decimal("entry_z", { precision: 10, scale: 4 }),
-    entrySigma: decimal("entry_sigma", { precision: 18, scale: 8 }),
+    forecastSdUsd: decimal("forecast_sd_usd", { precision: 12, scale: 4 }),
+    modelProb: decimal("model_prob", { precision: 8, scale: 6 }),
+    modelEdge: decimal("model_edge", { precision: 8, scale: 6 }),
     secondsToEnd: decimal("seconds_to_end", { precision: 8, scale: 2 }),
     minPriceDuringPosition: decimal("min_price_during_position", {
       precision: 18,
@@ -106,43 +111,6 @@ export const simulatedTrades = pgTable(
     uqOpenTradePerToken: uniqueIndex("uq_open_trade_per_market_token")
       .on(table.marketId, table.tokenId)
       .where(sql`status = 'OPEN'`),
-  }),
-);
-
-export const marketRegimeData = pgTable(
-  "market_regime_data",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    marketId: text("market_id").notNull(),
-    slug: text("slug"),
-    windowType: text("window_type").notNull(),
-    windowStart: timestamp("window_start").notNull(),
-    windowEnd: timestamp("window_end").notNull(),
-
-    // BTC over the window, measured from our own tick history.
-    btcStartPrice: decimal("btc_start_price", { precision: 18, scale: 2 }),
-    btcEndPrice: decimal("btc_end_price", { precision: 18, scale: 2 }),
-    btcHighPrice: decimal("btc_high_price", { precision: 18, scale: 2 }),
-    btcLowPrice: decimal("btc_low_price", { precision: 18, scale: 2 }),
-    /** Realized per-second volatility over the window, in $/s. */
-    btcSigmaPerSec: decimal("btc_sigma_per_sec", { precision: 18, scale: 8 }),
-    /** Times BTC crossed the start price — how choppy the window was. */
-    btcStrikeCrossings: integer("btc_strike_crossings"),
-    /** Ticks the measurements above are based on; low values mean low trust. */
-    btcTickCount: integer("btc_tick_count"),
-
-    winningOutcome: text("winning_outcome"),
-    tradeTaken: boolean("trade_taken").notNull(),
-    /** WIN or LOSS, null when no trade was taken. */
-    outcome: text("outcome"),
-
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    marketIdIdx: uniqueIndex("mrd_market_id_idx").on(table.marketId),
-    windowEndIdx: index("mrd_window_end_idx").on(table.windowEnd),
   }),
 );
 

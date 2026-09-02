@@ -2,7 +2,7 @@
 
 import type { SimulatedTrade } from "@/lib/types";
 import { marketNow } from "@/lib/market-time";
-import { MARKET_WINDOW_LABELS, type MarketWindow } from "@/lib/types";
+import { MARKET_WINDOW_LABEL } from "@/lib/types";
 import { pnlColor } from "@/lib/utils";
 import { useLiveState } from "@/lib/hooks";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -68,10 +68,7 @@ export function TradeDetailPopup({
   const returnPct = pnl !== null && cost > 0 ? (pnl / cost) * 100 : null;
 
   const outcome = trade.exitOutcome;
-  const windowLabel = trade.windowType
-    ? (MARKET_WINDOW_LABELS[trade.windowType as MarketWindow] ??
-      trade.windowType)
-    : null;
+  const windowLabel = MARKET_WINDOW_LABEL;
 
   const polyUrl =
     (marketSlug ?? trade.marketSlug)
@@ -85,11 +82,12 @@ export function TradeDetailPopup({
       ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/5"
       : "text-red-400 border-red-500/25 bg-red-500/5";
 
-  const btcAtEntry = num(trade.btcPriceAtEntry);
-  const strike = num(trade.btcTargetPrice);
-  const distance = num(trade.btcDistanceUsd);
-  const entryZ = num(trade.entryZ);
-  const entrySigma = num(trade.entrySigma);
+  const btcAtEntry = num(trade.twapAtEntry);
+  const strike = num(trade.strike);
+  const distance = num(trade.forecastMarginUsd);
+  const modelProb = num(trade.modelProb);
+  const modelEdge = num(trade.modelEdge);
+  const forecastSd = num(trade.forecastSdUsd);
   const enteredAt = num(trade.secondsToEnd);
 
   return (
@@ -208,18 +206,19 @@ export function TradeDetailPopup({
 
           <Section title="SIGNAL AT ENTRY">
             {btcAtEntry !== null && (
-              <Cell label="BTC" value={usd(btcAtEntry)} />
+              <Cell label="TWAP" value={usd(btcAtEntry)} />
             )}
             {strike !== null && strike > 0 && (
               <Cell
                 label="STRIKE"
-                hint="BTC price at window open — the level the market resolves against"
+                hint="Settlement TWAP at window open — the level the market resolves against"
                 value={usd(strike)}
               />
             )}
             {distance !== null && (
               <Cell
-                label="DISTANCE"
+                label="FORECAST MARGIN"
+                hint="Forecast settlement TWAP minus strike"
                 value={
                   <span
                     className={
@@ -237,11 +236,22 @@ export function TradeDetailPopup({
                 }
               />
             )}
-            {entryZ !== null && (
-              <Cell label="Z-SCORE" value={entryZ.toFixed(2)} />
+            {forecastSd !== null && (
+              <Cell
+                label="FORECAST σ"
+                hint="Standard deviation of the settlement forecast"
+                value={`$${forecastSd.toFixed(2)}`}
+              />
             )}
-            {entrySigma !== null && (
-              <Cell label="BTC σ" value={`$${entrySigma.toFixed(2)}/s`} />
+            {modelProb !== null && (
+              <Cell label="MODEL P" value={modelProb.toFixed(3)} />
+            )}
+            {modelEdge !== null && (
+              <Cell
+                label="MODEL EDGE"
+                hint="Model probability minus the ask paid"
+                value={modelEdge.toFixed(3)}
+              />
             )}
             {enteredAt !== null && (
               <Cell

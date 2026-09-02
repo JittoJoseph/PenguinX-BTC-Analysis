@@ -1,59 +1,29 @@
 import { z } from "zod";
 
-export const MARKET_WINDOWS = ["5M", "15M", "1H", "4H", "1D"] as const;
-export type MarketWindow = (typeof MARKET_WINDOWS)[number];
+export const MARKET_WINDOW = "15M" as const;
+export type MarketWindow = typeof MARKET_WINDOW;
 
 export interface WindowConfig {
-  tagSlug: string;
   slugPrefix: string;
-  seriesSlug: string;
   durationMs: number;
   category: string;
   label: string;
+  cryptoMarketConfigId: string;
+  twapLookbackSeconds: number;
+  rtdsTwapTopic: string;
 }
 
-export const WINDOW_CONFIGS: Record<MarketWindow, WindowConfig> = {
-  "5M": {
-    tagSlug: "5M",
-    slugPrefix: "btc-updown-5m",
-    seriesSlug: "btc-up-or-down-5m",
-    durationMs: 5 * 60 * 1000,
-    category: "btc-5m",
-    label: "BTC 5-Minute",
-  },
-  "15M": {
-    tagSlug: "15M",
-    slugPrefix: "btc-updown-15m",
-    seriesSlug: "btc-up-or-down-15m",
-    durationMs: 15 * 60 * 1000,
-    category: "btc-15m",
-    label: "BTC 15-Minute",
-  },
-  "1H": {
-    tagSlug: "1H",
-    slugPrefix: "btc-updown-1h",
-    seriesSlug: "btc-up-or-down-1h",
-    durationMs: 60 * 60 * 1000,
-    category: "btc-1h",
-    label: "BTC 1-Hour",
-  },
-  "4H": {
-    tagSlug: "4H",
-    slugPrefix: "btc-updown-4h",
-    seriesSlug: "btc-up-or-down-4h",
-    durationMs: 4 * 60 * 60 * 1000,
-    category: "btc-4h",
-    label: "BTC 4-Hour",
-  },
-  "1D": {
-    tagSlug: "1D",
-    slugPrefix: "btc-updown-1d",
-    seriesSlug: "btc-up-or-down-1d",
-    durationMs: 24 * 60 * 60 * 1000,
-    category: "btc-1d",
-    label: "BTC 1-Day",
-  },
+export const WINDOW_CONFIG: WindowConfig = {
+  slugPrefix: "btc-updown-15m",
+  durationMs: 15 * 60 * 1000,
+  category: "btc-15m",
+  label: "BTC 15-Minute",
+  cryptoMarketConfigId: "btc-15m-twap-60",
+  twapLookbackSeconds: 60,
+  rtdsTwapTopic: "crypto_prices_twap_sixty",
 };
+
+export const RTDS_RAW_TOPIC = "crypto_prices_chainlink";
 
 export const POLY_URLS = {
   GAMMA_API_BASE: "https://gamma-api.polymarket.com",
@@ -62,11 +32,10 @@ export const POLY_URLS = {
   RTDS_WS: "wss://ws-live-data.polymarket.com",
 } as const;
 
-// Polymarket crypto (5M/15M) fee per share = RATE·(p·(1-p))^EXPONENT, 20% maker rebate
+// https://docs.polymarket.com/trading/fees — taker fee per share = 0.07·p·(1-p).
+// Makers pay nothing; we are takers on both entry and exit.
 export const CRYPTO_FEE = {
-  RATE: 0.25,
-  EXPONENT: 2,
-  MAKER_REBATE_PERCENT: 0.2,
+  RATE: 0.07,
 } as const;
 
 // Protocol minimum order size in shares (CLOB orderbook `min_order_size`)
@@ -81,15 +50,16 @@ export const ConfigSchema = z.object({
     startingCapital: z.number().min(1).max(10_000_000),
   }),
   strategy: z.object({
-    marketWindow: z.enum(MARKET_WINDOWS),
-    entryFromWindowSeconds: z.number().min(5).max(300),
-    entryPriceFloor: z.number().min(0).max(0.99),
-    maxEntryPrice: z.number().min(0.5).max(0.999),
-    zEntryThreshold: z.number().min(0.5).max(20),
+    entryWindowOpenSeconds: z.number().min(5).max(120),
+    entryWindowCloseSeconds: z.number().min(1).max(120),
+    minEntryPrice: z.number().min(0.01).max(0.9),
+    maxEntryPrice: z.number().min(0.1).max(0.99),
+    minModelEdge: z.number().min(0).max(0.5),
+    minSettlementSigmas: z.number().min(0).max(10),
     sigmaWindowMs: z.number().min(10_000).max(600_000),
-    minEntryEdge: z.number().min(0).max(0.5),
-    stopLossEnabled: z.boolean(),
-    stopLossDelta: z.number().min(0).max(1),
+    maxRawStalenessMs: z.number().min(1000).max(60_000),
+    /** Stop trigger as a fraction of entry price. Always active. */
+    stopLossFraction: z.number().min(0.05).max(0.9),
     scanIntervalMs: z.number().min(10000),
     /** Simulated submit→match round-trip; the book keeps moving in between. */
     executionLatencyMs: z.number().min(0).max(5000),

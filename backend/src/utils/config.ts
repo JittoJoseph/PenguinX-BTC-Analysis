@@ -21,12 +21,6 @@ function envNum(key: string, defaultValue: number): number {
   return parsed;
 }
 
-function envBool(key: string, defaultValue: boolean): boolean {
-  const value = process.env[key];
-  if (value === undefined) return defaultValue;
-  return value === "true";
-}
-
 export function loadConfig(): Config {
   const rawConfig = {
     db: {
@@ -36,15 +30,15 @@ export function loadConfig(): Config {
       startingCapital: envNum("STARTING_CAPITAL", 100),
     },
     strategy: {
-      marketWindow: env("MARKET_WINDOW", "5M"),
-      entryFromWindowSeconds: envNum("ENTRY_FROM_WINDOW_SECONDS", 30),
-      entryPriceFloor: envNum("ENTRY_PRICE_FLOOR", 0.6),
-      maxEntryPrice: envNum("MAX_ENTRY_PRICE", 0.98),
-      zEntryThreshold: envNum("Z_ENTRY_THRESHOLD", 3.0),
-      sigmaWindowMs: envNum("SIGMA_WINDOW_MS", 60_000),
-      minEntryEdge: envNum("MIN_ENTRY_EDGE", 0),
-      stopLossEnabled: envBool("STOP_LOSS_ENABLED", true),
-      stopLossDelta: envNum("STOP_LOSS_DELTA", 0.2),
+      entryWindowOpenSeconds: envNum("ENTRY_WINDOW_OPEN_SECONDS", 50),
+      entryWindowCloseSeconds: envNum("ENTRY_WINDOW_CLOSE_SECONDS", 10),
+      minEntryPrice: envNum("MIN_ENTRY_PRICE", 0.15),
+      maxEntryPrice: envNum("MAX_ENTRY_PRICE", 0.9),
+      minModelEdge: envNum("MIN_MODEL_EDGE", 0.06),
+      minSettlementSigmas: envNum("MIN_SETTLEMENT_SIGMAS", 0.35),
+      sigmaWindowMs: envNum("SIGMA_WINDOW_MS", 180_000),
+      maxRawStalenessMs: envNum("MAX_RAW_STALENESS_MS", 5_000),
+      stopLossFraction: envNum("STOP_LOSS_FRACTION", 0.35),
       executionLatencyMs: envNum("EXECUTION_LATENCY_MS", 250),
       scanIntervalMs: envNum("SCAN_INTERVAL_MS", 60_000),
     },
