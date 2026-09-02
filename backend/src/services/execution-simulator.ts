@@ -124,13 +124,12 @@ export function simulateLimitBuy(
 }
 
 /**
- * Polymarket crypto taker fee per share: 0.25 × (p × (1-p))², rounded to 4dp.
- * Models taker fees (no maker rebate), which is conservative at our near-extreme
- * entry prices.
+ * Polymarket crypto taker fee per share: 0.07 × p × (1-p), rounded to 4dp.
+ * Peaks at 50¢, which is where this strategy trades most, so it is a real cost
+ * rather than a rounding detail.
  */
 export function calculateFeePerShare(price: number): number {
-  const pq = price * (1 - price);
-  const fee = CRYPTO_FEE.RATE * Math.pow(pq, CRYPTO_FEE.EXPONENT);
+  const fee = CRYPTO_FEE.RATE * price * (1 - price);
   return Math.round(fee * 10000) / 10000;
 }
 
@@ -234,21 +233,22 @@ export function simulateLimitSell(
   };
 }
 
+/**
+ * The bid at which a position's stop fires, as a fraction of entry rather than a
+ * fixed number of cents. Entries here run from 0.15 to 0.90, and a fixed delta
+ * means something different at each end: 25c below entry is 28% of a 0.90
+ * position, 83% of a 0.30 one, and unreachable below 0.25, which would leave the
+ * cheapest positions with no stop at all. A fraction keeps the risk per position
+ * constant across the band.
+ */
+export function stopTriggerPrice(entryPrice: number, fraction: number): number {
+  return entryPrice * (1 - fraction);
+}
+
 export function calculateWinProfit(
   entryPrice: number,
   shares: number,
   fees: number,
 ): number {
   return (1.0 - entryPrice) * shares - fees;
-}
-
-/** Realized PnL when exiting a position before oracle resolution. */
-export function calculateEarlyExitPnl(
-  entryPrice: number,
-  exitPrice: number,
-  shares: number,
-  entryFees: number,
-  exitFees: number,
-): number {
-  return (exitPrice - entryPrice) * shares - entryFees - exitFees;
 }

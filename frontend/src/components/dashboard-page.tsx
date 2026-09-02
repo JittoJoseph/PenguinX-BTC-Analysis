@@ -29,9 +29,8 @@ import type {
   LiveMarketPrice,
 } from "@/lib/types";
 import {
-  MARKET_WINDOW_LABELS,
-  getMarketWindowDurationMs,
-  type MarketWindow,
+  MARKET_WINDOW_LABEL,
+  MARKET_WINDOW_DURATION_MS,
 } from "@/lib/types";
 import NumberFlow from "@number-flow/react";
 
@@ -68,7 +67,7 @@ export function DashboardPage() {
     [stats?.liveMarkets],
   );
   const btcPrice = stats?.btcPrice ?? null;
-  const sigmaPerSec = stats?.orchestrator.sigmaPerSec ?? null;
+  const rawSigma = stats?.orchestrator.rawSigma ?? null;
 
   const primaryMarket = useMemo(() => {
     const byEnd = (a: { endDate: string }, b: { endDate: string }) =>
@@ -102,9 +101,9 @@ export function DashboardPage() {
     if (!marketId) return null;
     const trade = trades.find(
       (t) =>
-        t.marketId === marketId && t.status === "OPEN" && !!t.btcPriceAtEntry,
+        t.marketId === marketId && t.status === "OPEN" && !!t.twapAtEntry,
     );
-    return trade?.btcPriceAtEntry ? parseFloat(trade.btcPriceAtEntry) : null;
+    return trade?.twapAtEntry ? parseFloat(trade.twapAtEntry) : null;
   }, [primaryMarket, trades]);
 
   const marketEndDates = useMemo<Record<string, string>>(() => {
@@ -127,10 +126,7 @@ export function DashboardPage() {
       };
     }, [selectedTrade, liveMarkets, markets]);
 
-  const windowLabel = stats?.config?.marketWindow
-    ? (MARKET_WINDOW_LABELS[stats.config.marketWindow as MarketWindow] ??
-      stats.config.marketWindow)
-    : "BTC WINDOW";
+  const windowLabel = MARKET_WINDOW_LABEL;
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -280,7 +276,7 @@ export function DashboardPage() {
                   <StatRow
                     label="BTC Vol"
                     value={(() => {
-                      const s = sigmaPerSec ?? stats.orchestrator.sigmaPerSec;
+                      const s = rawSigma ?? stats.orchestrator.rawSigma;
                       return s != null ? `~$${s.toFixed(2)}/s` : "—";
                     })()}
                   />
@@ -292,34 +288,33 @@ export function DashboardPage() {
               {stats?.config ? (
                 <div className="space-y-2 text-xs font-mono">
                   <StatRow
-                    label="Z Entry Threshold"
-                    value={stats.config.zEntryThreshold.toFixed(2)}
+                    label="TWAP Lookback"
+                    value={`${stats.config.twapLookbackSeconds}s`}
                   />
                   <StatRow
                     label="Entry Band"
-                    value={`${stats.config.entryPriceFloor.toFixed(2)}–${stats.config.maxEntryPrice.toFixed(2)}`}
+                    value={`${stats.config.minEntryPrice.toFixed(2)}–${stats.config.maxEntryPrice.toFixed(2)}`}
                   />
                   <StatRow
-                    label="Entry From Window"
-                    value={`${stats.config.entryFromWindowSeconds}s`}
+                    label="Entry Window"
+                    value={`${stats.config.entryWindowCloseSeconds}–${stats.config.entryWindowOpenSeconds}s`}
                   />
                   <StatRow
                     label="Sigma Window"
                     value={`${Math.round(stats.config.sigmaWindowMs / 1000)}s`}
                   />
                   <StatRow
-                    label="Min Entry Edge"
-                    value={stats.config.minEntryEdge.toString()}
+                    label="Min Model Edge"
+                    value={stats.config.minModelEdge.toString()}
+                  />
+                  <StatRow
+                    label="Min Settle Sigmas"
+                    value={stats.config.minSettlementSigmas.toString()}
                   />
                   <StatRow
                     label="Stop Loss"
-                    value={
-                      stats.config.stopLossEnabled
-                        ? `${(stats.config.stopLossDelta * 100).toFixed(0)}¢ below entry`
-                        : "DISABLED"
-                    }
-                    accent={stats.config.stopLossEnabled}
-                    warn={!stats.config.stopLossEnabled}
+                    value={`${(stats.config.stopLossFraction * 100).toFixed(0)}% below entry`}
+                    accent
                   />
                   <StatRow
                     label="Position Budget"
@@ -444,7 +439,6 @@ function TopDashboardSection({
 
   const gainFromInitial = portfolioValue - initialCapital;
   const mainDisplayValue = gainFromInitial;
-  const windowType = stats?.config?.marketWindow || "5M";
 
   const effectiveBtcAtStart =
     primaryMarket?.btcPriceAtWindowStart ??
@@ -469,7 +463,7 @@ function TopDashboardSection({
       : effectiveBtcAtStart;
 
     const end = new Date(primaryMarket.endDate);
-    const windowDurationMs = getMarketWindowDurationMs(windowType);
+    const windowDurationMs = MARKET_WINDOW_DURATION_MS;
     const mins = Math.floor(windowDurationMs / 60000);
     const start = new Date(end.getTime() - windowDurationMs);
     const fmt = (d: Date) =>
@@ -498,7 +492,7 @@ function TopDashboardSection({
           : `${mins}M window`,
       direction: isAbove ? "above" : isBelow ? "below" : null,
     };
-  }, [primaryMarket, windowType, effectiveBtcAtStart]);
+  }, [primaryMarket, effectiveBtcAtStart]);
 
   const btcDistanceInfo = useMemo(() => {
     if (!marketDetails?.targetPriceNum || !btcPrice) return null;

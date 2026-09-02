@@ -589,11 +589,11 @@ export function useActivityLog() {
       const price = trade.entryPrice
         ? `@${(parseFloat(trade.entryPrice) * 100).toFixed(1)}¢`
         : "";
-      const btc = trade.btcPriceAtEntry
-        ? ` BTC $${parseFloat(trade.btcPriceAtEntry).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+      const btc = trade.twapAtEntry
+        ? ` BTC $${parseFloat(trade.twapAtEntry).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
         : "";
-      const zStr = trade.entryZ
-        ? ` z:${parseFloat(trade.entryZ).toFixed(2)}`
+      const zStr = trade.modelEdge
+        ? ` edge:${parseFloat(trade.modelEdge).toFixed(3)}`
         : "";
 
       const entry: ActivityEntry = {

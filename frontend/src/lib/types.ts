@@ -14,15 +14,22 @@ export interface SimulatedTrade {
   actualCost: string;
   entryFees: string | null;
   fillStatus: string | null;
-  btcPriceAtEntry: string | null;
-  /** Strike: the window-open BTC price */
-  btcTargetPrice: string | null;
-  /** Signed distance in favour of the entered side */
-  btcDistanceUsd: string | null;
-  /** Vol-adjusted distance z-score at entry */
-  entryZ: string | null;
-  /** BTC $/sec realized volatility at entry */
-  entrySigma: string | null;
+  /** Settlement TWAP at entry */
+  twapAtEntry: string | null;
+  /** Unsmoothed Chainlink price at entry */
+  rawAtEntry: string | null;
+  /** The window-open TWAP the market resolves against */
+  strike: string | null;
+  /** Forecast settlement TWAP at window end */
+  forecastSettlement: string | null;
+  /** Forecast settlement minus strike, in dollars */
+  forecastMarginUsd: string | null;
+  /** Standard deviation of the settlement forecast, in dollars */
+  forecastSdUsd: string | null;
+  /** Model probability for the side bought */
+  modelProb: string | null;
+  /** modelProb minus the ask paid */
+  modelEdge: string | null;
   secondsToEnd: string | null;
   /** Lowest executable best bid observed while the position was open */
   minPriceDuringPosition: string | null;
@@ -74,6 +81,8 @@ export interface OpenPositionSnapshot {
   /** Lowest executable best bid seen since entry. */
   minPriceDuringPosition: number;
   stopLossPrice: number;
+  /** Shares still held; a partly filled stop leaves a remainder. */
+  remainingShares: number;
 }
 
 /**
@@ -98,12 +107,13 @@ export interface LiveState {
     strategy: {
       watchedTokens: number;
       triggersCount: number;
-      evaluatedTokens: number;
+      tradedMarkets: number;
     };
     btcConnected: boolean;
     btcPrice: number | null;
     /** BTC realized per-second volatility in USD (null until enough data) */
-    sigmaPerSec: number | null;
+    rawSigma: number | null;
+    btcRawPrice: number | null;
   };
   liveMarkets: LiveMarketInfo[];
   openPositions: OpenPositionSnapshot[];
@@ -115,17 +125,18 @@ export interface LiveState {
   };
   config: {
     marketWindow: string;
-    zEntryThreshold: number;
+    twapLookbackSeconds: number;
     maxEntryPrice: number;
-    entryFromWindowSeconds: number;
+    entryWindowOpenSeconds: number;
+    entryWindowCloseSeconds: number;
     sigmaWindowMs: number;
-    minEntryEdge: number;
-    stopLossEnabled: boolean;
-    stopLossDelta: number;
+    minModelEdge: number;
+    minSettlementSigmas: number;
+    stopLossFraction: number;
     startingCapital: number;
     positionBudgetUsd: number;
 
-    entryPriceFloor: number;
+    minEntryPrice: number;
   };
   /** Backend's sync to Polymarket's clock; surfaced so drift is observable. */
   clock: {
@@ -190,7 +201,7 @@ export interface PerformanceMetrics {
   largestWin: string;
   largestLoss: string;
   totalFees: string;
-  avgBtcDistance: string;
+  avgModelEdge: string;
   openPositions: number;
   unrealizedPnl: string;
   cashBalance: string;
@@ -279,28 +290,6 @@ export interface WsMessage {
   data?: unknown;
 }
 
-export type MarketWindow = "5M" | "15M" | "1H" | "4H" | "1D";
-
-export const MARKET_WINDOW_LABELS: Record<MarketWindow, string> = {
-  "5M": "BTC 5-MIN",
-  "15M": "BTC 15-MIN",
-  "1H": "BTC 1-HOUR",
-  "4H": "BTC 4-HOUR",
-  "1D": "BTC 1-DAY",
-};
-
-export const MARKET_WINDOW_DURATION_MS: Record<MarketWindow, number> = {
-  "5M": 5 * 60 * 1000,
-  "15M": 15 * 60 * 1000,
-  "1H": 60 * 60 * 1000,
-  "4H": 4 * 60 * 60 * 1000,
-  "1D": 24 * 60 * 60 * 1000,
-};
-
-export function getMarketWindowDurationMs(windowType?: string | null): number {
-  if (!windowType) return MARKET_WINDOW_DURATION_MS["15M"];
-  return (
-    MARKET_WINDOW_DURATION_MS[windowType as MarketWindow] ??
-    MARKET_WINDOW_DURATION_MS["15M"]
-  );
-}
+/** The one supported market. Everything else was removed with the 5m strategy. */
+export const MARKET_WINDOW_LABEL = "BTC 15-MIN";
+export const MARKET_WINDOW_DURATION_MS = 15 * 60 * 1000;

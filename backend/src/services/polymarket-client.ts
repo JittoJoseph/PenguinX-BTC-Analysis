@@ -143,14 +143,6 @@ export class PolymarketClient {
    * Parse the BTC target price from question text, e.g.
    * "Will BTC be above $97,450.00 at ...?". Returns null if not present.
    */
-  static parseTargetPrice(question: string | null | undefined): number | null {
-    if (!question) return null;
-    const match = question.match(/(?:above|below)\s*\$([0-9,]+(?:\.\d+)?)/i);
-    if (!match) return null;
-    const priceStr = match[1]!.replace(/,/g, "");
-    const price = parseFloat(priceStr);
-    return isNaN(price) ? null : price;
-  }
 }
 
 let clientInstance: PolymarketClient | null = null;

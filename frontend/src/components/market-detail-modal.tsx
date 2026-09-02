@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { marketNow } from "@/lib/market-time";
 import { ExternalLink, X } from "lucide-react";
 import type { DiscoveredMarket, SimulatedTrade } from "@/lib/types";
-import { MARKET_WINDOW_LABELS, type MarketWindow } from "@/lib/types";
+import { MARKET_WINDOW_LABEL } from "@/lib/types";
 import NumberFlow from "@number-flow/react";
 
 interface MarketDetailModalProps {
@@ -110,9 +110,7 @@ export function MarketDetailModal({
   if (!market) return null;
 
   const isActive = market.computedStatus === "ACTIVE";
-  const windowLabel =
-    MARKET_WINDOW_LABELS[market.windowType as MarketWindow] ??
-    market.windowType;
+  const windowLabel = MARKET_WINDOW_LABEL;
   const polyUrl = polymarketMarketUrl(market);
   const marketTrades = trades.filter((trade) => trade.marketId === market.id);
 
@@ -263,12 +261,12 @@ export function MarketDetailModal({
                     )}
                     <div>
                       <span className="text-muted-foreground/60">
-                        BTC @ ENTRY:
+                        TWAP @ ENTRY:
                       </span>
                       <span className="ml-1 tabular-nums">
                         $
                         {parseFloat(
-                          trade.btcPriceAtEntry || "0",
+                          trade.twapAtEntry || "0",
                         ).toLocaleString()}
                       </span>
                     </div>

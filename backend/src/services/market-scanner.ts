@@ -1,16 +1,16 @@
 import { EventEmitter } from "events";
 import { createModuleLogger } from "../utils/logger.js";
 import { getConfig } from "../utils/config.js";
-import { WINDOW_CONFIGS, type WindowConfig } from "../types/index.js";
+import { WINDOW_CONFIG, type WindowConfig } from "../types/index.js";
 import { getPolymarketClient, PolymarketClient } from "./polymarket-client.js";
 import { marketNow } from "./market-clock.js";
 
 const logger = createModuleLogger("market-scanner");
 
 /**
- * Discovers BTC window markets by deterministic slug. BTC 5-minute slugs follow
- * `btc-updown-5m-{unixWindowStart}`, where the window start is aligned to a round
- * boundary: `Math.floor(now / 300) * 300`. Each scan fetches recent-past, current,
+ * Discovers BTC window markets by deterministic slug. BTC 15-minute slugs follow
+ * `btc-updown-15m-{unixWindowStart}`, where the window start is aligned to a round
+ * boundary: `Math.floor(now / 900) * 900`. Each scan fetches recent-past, current,
  * and upcoming window slugs and emits any newly-seen market.
  */
 export class MarketScanner extends EventEmitter {
@@ -33,11 +33,10 @@ export class MarketScanner extends EventEmitter {
     this.running = true;
 
     const config = getConfig();
-    const windowConfig = WINDOW_CONFIGS[config.strategy.marketWindow];
+    const windowConfig = WINDOW_CONFIG;
 
     logger.info(
       {
-        window: config.strategy.marketWindow,
         slugPrefix: windowConfig.slugPrefix,
         durationMs: windowConfig.durationMs,
         scanIntervalMs: config.strategy.scanIntervalMs,
@@ -95,7 +94,7 @@ export class MarketScanner extends EventEmitter {
 
   async scan(): Promise<void> {
     const config = getConfig();
-    const windowConfig = WINDOW_CONFIGS[config.strategy.marketWindow];
+    const windowConfig = WINDOW_CONFIG;
 
     try {
       const slugs = this.computeWindowSlugs(windowConfig);

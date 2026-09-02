@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { marketNow } from "@/lib/market-time";
 import type { DiscoveredMarket, SimulatedTrade } from "@/lib/types";
-import { MARKET_WINDOW_LABELS, type MarketWindow } from "@/lib/types";
+import { MARKET_WINDOW_LABEL } from "@/lib/types";
 
 interface MarketsPanelProps {
   markets: DiscoveredMarket[];
@@ -140,9 +140,7 @@ export function MarketsPanel({
         </thead>
         <tbody>
           {markets.map((market) => {
-            const fallbackLabel =
-              MARKET_WINDOW_LABELS[market.windowType as MarketWindow] ??
-              market.windowType;
+            const fallbackLabel = MARKET_WINDOW_LABEL;
             const label = market.endDate 
               ? new Date(market.endDate).toLocaleDateString([], { month: "short", day: "numeric" }) 
               : fallbackLabel;

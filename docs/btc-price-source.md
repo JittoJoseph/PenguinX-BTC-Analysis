@@ -1,29 +1,33 @@
-# Authoritative BTC Price Source and Window-Start Price
+# BTC Price Sources and the Settlement Forecast
 
 This is a reference for the BTC price handling in the real-money execution
-system. It has three sections:
+system. It has four sections:
 
 1. the true market source,
-2. how the simulator uses that source today,
-3. the rules that a real-money implementation must obey.
+2. the two feeds and what each one is for,
+3. the settlement forecast,
+4. the rules that a real-money implementation must obey.
 
 ---
 
 ## 1. The true source
 
-The Polymarket BTC 5-minute Up/Down markets settle on the Chainlink BTC/USD
-30-second TWAP. The result is `Up` when the TWAP at the window end is equal to
-or more than the TWAP at the window open. If it is less, the result is `Down`.
-A tie gives `Up`.
+The Polymarket BTC 15-minute Up/Down markets settle on the Chainlink BTC/USD
+60-second TWAP. The result is `Up` when the TWAP at the window end is equal to or
+more than the TWAP at the window open. If it is less, the result is `Down`.
 
 All of the evidence comes from Polymarket data:
 
 | Source | Value |
 |---|---|
-| `market.resolutionSource` | `https://data.chain.link/streams/btc-usd-twap-30s-streams` |
-| `market.cryptoMarketConfigId` | `btc-5m-twap-30` |
-| `GET gamma-api.polymarket.com/crypto-market-configs` for that ID | `{asset: "btc", duration: "5m", twapEnabled: true, twapLookbackSeconds: 30}` |
-| `market.eventStartTime` | The window open instant, for example `2026-08-09T08:20:00Z` |
+| `market.resolutionSource` | `https://data.chain.link/streams/btc-usd-twap-60s-streams` |
+| `market.cryptoMarketConfigId` | `btc-15m-twap-60` |
+| `GET gamma-api.polymarket.com/crypto-market-configs` for that ID | `{asset: "btc", duration: "15m", twapEnabled: true, twapLookbackSeconds: 60}` |
+| `market.eventStartTime` | The window open instant |
+
+Polymarket runs three BTC Up/Down durations and no others: `5m`, `15m` and `4h`.
+There is no 1-hour market. The 5m markets use a 30-second TWAP; the 15m and 4h
+markets both use 60 seconds.
 
 The [Chainlink TWAP
 documentation](https://docs.polymarket.com/market-data/chainlink-twap) gives the
@@ -31,64 +35,43 @@ RTDS topics:
 
 | Lookback | RTDS topic |
 |---|---|
-| 30 seconds | **`crypto_prices_twap_thirty`** — the 5m markets |
-| 60 seconds | `crypto_prices_twap_sixty` — the 15m markets |
-
-### Do not use `crypto_prices_chainlink`
-
-CAUTION: Do not use the `crypto_prices_chainlink` topic for these markets. This
-topic is the raw Chainlink BTC/USD feed, not the TWAP. It is not in the topic
-table above, and its payload has no `window_s` field.
-
-A comparison against the 30s TWAP across 136 paired observations gives:
-
-| median absolute difference | p90 | maximum |
-|---|---|---|
-| $1.80 | $4.37 | $5.62 |
-
-An error of approximately $1.80 in the price to beat is large. Approximately
-31% of 5-minute windows end within $5 of the price to beat.
-
-### Why one source is necessary
-
-The window-start price, the live price for the entry decision, and the
-window-end price must come from the same feed on the same clock.
-
-Assume that the strike comes from one feed and the live price from a different
-feed. Then a constant offset between the two feeds looks like a true BTC move.
-In a window with low volatility the full move can be a few cents. The offset
-alone can then decide the result.
-
-The simulator therefore uses one BTC feed for all three prices.
+| 30 seconds | `crypto_prices_twap_thirty` — the 5m markets |
+| 60 seconds | **`crypto_prices_twap_sixty`** — the 15m and 4h markets |
 
 ---
 
-## 2. How the simulator uses the source
+## 2. The two feeds
 
-### Subscription
+The system subscribes to two topics. They do different jobs and you must not
+substitute one for the other.
 
-```json
-{
-  "action": "subscribe",
-  "subscriptions": [
-    {
-      "topic": "crypto_prices_twap_thirty",
-      "type": "update",
-      "filters": "{\"symbol\":\"btc/usd\"}"
-    }
-  ]
-}
-```
+| Topic | What it is | What it is for |
+|---|---|---|
+| `crypto_prices_twap_sixty` | The settlement variable | The strike, the current level, the forecast anchor |
+| `crypto_prices_chainlink` | The unsmoothed feed | Volatility, and the roll-off term |
 
-The endpoint is `wss://ws-live-data.polymarket.com`. The client sends the text
-frame `PING` every 5 seconds. The `filters` value must be compact JSON with a
-lowercase symbol and no spaces.
+CAUTION: Never settle against `crypto_prices_chainlink`, and never compare it to
+the strike. It is not the value the market resolves on. A comparison against the
+30s TWAP across 136 paired observations gave a median absolute difference of
+$1.80 and a maximum of $5.62, which is enough to decide a close window.
+
+### Why volatility must come from the raw feed
+
+A 60-second TWAP is a moving average, so consecutive observations share 59 of
+their 60 seconds of input. For a moving average of length *n* over a random walk,
+`sd(delta TWAP) = sigma / sqrt(n)`. Volatility measured on TWAP ticks therefore
+understates the true value by `sqrt(60)`, a factor of 7.75.
+
+This is not a small correction and it is easy to miss, because the resulting
+number looks plausible. Measured live, the raw feed gave `sigma = $4.01/s` while
+the same estimator on TWAP ticks gave `$0.52/s`, a ratio of 7.7. A model built on
+the TWAP-tick figure will believe every position is close to certain.
 
 ### Payload
 
 ```json
 {
-  "topic": "crypto_prices_twap_thirty",
+  "topic": "crypto_prices_twap_sixty",
   "type": "update",
   "timestamp": 1785178800123,
   "payload": {
@@ -96,7 +79,7 @@ lowercase symbol and no spaces.
     "value": 65000.5,
     "full_accuracy_value": "65000500000000000000000",
     "timestamp": 1785178800000,
-    "window_s": 30
+    "window_s": 60
   }
 }
 ```
@@ -104,132 +87,92 @@ lowercase symbol and no spaces.
 | Field | Use |
 |---|---|
 | `payload.timestamp` | The observation time. All window boundaries compare against this clock. |
-| outer `timestamp` | The time when the publisher sent the update to RTDS. The simulator does not use it. |
-| `payload.value` | The price that the simulator writes. |
-| `payload.full_accuracy_value` | The exact signed E18 fixed-point value. It differs from `value` by approximately 7×10⁻¹² USD. This difference is too small to matter, so the simulator uses `value`. |
-| `payload.window_s` | The value is `30`. It makes sure that the topic is correct. |
+| outer `timestamp` | The time when the publisher sent the update. The system does not use it. |
+| `payload.value` | The price the system writes. |
+| `payload.window_s` | The value is `60`. It makes sure that the topic is correct. |
 
-An observation arrives approximately once each second. It arrives approximately
-1.5 to 2.1 seconds after its own observation time.
-
-### Observation time and arrival time
-
-These are two different clocks for two different purposes. A mix of the two is
-the failure that is most difficult to see.
-
-| Purpose | Clock | Reason |
-|---|---|---|
-| The price history and the `currentPrice` timestamps | `payload.timestamp`, the observation time | Polymarket defines the window boundaries. A comparison against arrival time selects an observation that is approximately 2 seconds old. |
-| Freshness: `getPriceAgeMs`, `isPriceFresh`, the staleness watchdog | Arrival time | This measures delivery. The observation time always shows an age of approximately 2 seconds and makes the normal publish lag look like a fault. |
-
-```ts
-private setPrice(price: number, observedAtMs: number): void {
-  this.lastPriceReceivedMs = marketNow();     // arrival — freshness only
-  if (observedAtMs < this.lastTimestamp) return;
-
-  this.currentPrice = price;
-  this.lastTimestamp = observedAtMs;
-  this.priceHistory.push({ price, timestamp: observedAtMs });
-  ...
-}
-```
-
-The monotonic guard keeps `priceHistory` in order of observation time. The
-binary search in `getPriceAt()` needs this order.
-
-The freshness limit is 30 seconds. Above this limit the watchdog makes a new
-connection. RTDS can stop transmission while the TCP connection stays open.
-
-### The history buffer
-
-The buffer is in memory. It has a TTL of 1 hour. The code prunes it at
-intervals.
-
-| Accessor | Result |
-|---|---|
-| `getPriceAt(t)` | The last observation with `timestamp <= t`, found by binary search. If there is none, the result is `null`. |
-| `getHistoryBetween(from, to)` | The observations in the inclusive range |
-| `getCurrentPrice()` | The newest observation and its observation timestamp |
-
-This topic sends no history at connect time. The documentation is clear:
-"Subscriptions start with the next update. There is no snapshot, history, or
-replay after a disconnect." A new process therefore starts with an empty buffer.
-It can answer questions only about instants after it connected.
-
-### The window-start price, or price to beat
-
-The window start is `market.endDate` minus the window duration.
-
-`tryFillBtcWindowStart()` runs on each observation, the `btcPriceUpdate` event,
-for each market that has no strike:
-
-```ts
-const windowStartMs = state.endDate.getTime() - this.windowDurationMs;
-if (nowMs < windowStartMs) continue;              // window not open yet
-
-const price = this.btcWatcher.getPriceAt(windowStartMs);
-if (price === null) continue;                     // no observation → stays NULL
-
-state.btcPriceAtWindowStart = price;
-// strike propagates to the strategy engine
-```
-
-The guard `nowMs < windowStartMs` is necessary, not defensive. A query for a
-boundary in the future returns the newest observation. That result is the
-current price, which this design removes.
-
-### There is no fallback
-
-Assume that the process starts or connects again in the middle of a window.
-Then there is no observation at the open of that window. `getPriceAt` returns
-`null` and `btcPriceAtWindowStart` stays NULL.
-
-The market then never becomes tradeable. This occurs through existing behaviour
-only, because the strategy engine returns early on
-`if (market.strike === null)`. No separate trading guard is necessary.
-
-The design has none of these:
-
-- a fallback to the current BTC price,
-- a second feed or an approximate feed,
-- a calculation of the observation that the process did not receive.
-
-A strike that comes from a calculation is worse than no trade. The simulator
-still writes a record for the window, with `btc_start_price = NULL`.
+Both topics arrive at approximately one observation each second, approximately
+1.5 to 2.1 seconds after the observation time they carry. Index every price by
+`payload.timestamp`. Use arrival time only to decide whether the feed is stale.
 
 ---
 
-## 3. Rules for the real-money system
+## 3. The settlement forecast
+
+Let `W` be the TWAP lookback in seconds and `tau` the seconds left in the window.
+
+Because the TWAP is an average over `[end - W, end]`, its change from now to the
+window end is the difference between the stretch that arrives and the stretch
+that leaves:
+
+```
+TWAP_end - TWAP_now = (1/W) * ( integral of spot over [now, end]
+                              - integral of spot over [now - W, now - W + tau] )
+```
+
+The second integral is entirely in the past, so it is known. The first has
+expectation `tau * spot_now`. That gives:
+
+```
+E[TWAP_end] = TWAP_now + (min(tau, W) / W) * (spot_now - rollingOutMean)
+sd[TWAP_end] = sigma_raw * sqrt(varFactor)
+varFactor    = ((b^3 - a^3) / 3 - a^2 * (b - a)) / W^2 ,  a = max(0, tau - W), b = tau
+```
+
+`rollingOutMean` is the mean of the raw feed over `[now - W, now - W + tau]`.
+
+The forecast anchors on the **published** TWAP and uses raw prices only for the
+difference. This matters: Chainlink does not publish its sampling boundaries or
+weighting, and the documentation says not to reproduce the value independently.
+Anchoring this way needs no such reproduction, and a constant offset between our
+raw integral and Chainlink's own cancels between the two terms.
+
+Measured against live data, the residual matches the closed form closely:
+
+| tau | R-squared | residual sd (measured) | residual sd (formula) | naive sd |
+|---|---|---|---|---|
+| 10s | 0.98 | $1.13 | $1.22 | $12.68 |
+| 20s | 0.95 | $3.37 | $3.45 | $17.93 |
+| 30s | 0.90 | $7.26 | $6.34 | $21.96 |
+| 60s | 0.58 | $22.56 | $17.93 | $31.05 |
+
+Beyond `tau = W` the roll-off term is zero and only the variance correction
+remains, which is why the entry window closes at 50 seconds.
+
+### Data gates
+
+The forecast is only as good as its inputs, so three conditions block a trade:
+
+- The raw feed must be fresher than `MAX_RAW_STALENESS_MS`.
+- `rollingOutMean` returns null when its range is not fully covered by ticks
+  close enough together to integrate. A feed gap must produce no trade rather
+  than a confident wrong number.
+- The strike must exist. A window whose open was not observed stays unstruck.
+
+---
+
+## 4. Rules for the real-money system
 
 | # | Rule |
 |---|---|
-| 1 | Read `cryptoMarketConfigId` and `resolutionSource` from the market. Do not assume a feed. |
-| 2 | Read `twapLookbackSeconds` and select the RTDS topic that agrees with it. |
-| 3 | For a 5-minute market, use `crypto_prices_twap_thirty`. For a 15-minute market, use `crypto_prices_twap_sixty`. Never use `crypto_prices_chainlink`. |
-| 4 | Use one feed for the window-start price, the live price, and the window-end price. Never mix two feeds. |
-| 5 | Index each price by `payload.timestamp`, the observation time. Never index by arrival time. |
-| 6 | Keep the arrival time separate. Use the arrival time only for freshness and for reconnect decisions. |
-| 7 | Use the observation at the window-open instant as the price to beat. Do not query a boundary that did not occur. |
-| 8 | If that observation is absent, leave the strike unset and do not trade the market. |
-| 9 | Keep `payload.full_accuracy_value` available. The venue can need an exact E18 comparison later. |
+| 1 | Read `cryptoMarketConfigId` and `twapLookbackSeconds` from the market. Do not assume a feed. |
+| 2 | Settle and strike against the TWAP topic that matches the lookback, never against `crypto_prices_chainlink`. |
+| 3 | Measure volatility on the raw feed. A TWAP-tick estimate is low by `sqrt(W)`. |
+| 4 | Compute the roll-off term from the raw feed, anchored on the published TWAP. Do not reproduce the TWAP from scratch. |
+| 5 | Index each price by `payload.timestamp`. Keep arrival time separate and use it only for staleness. |
+| 6 | Use the TWAP observation at the window-open instant as the strike. Do not query a boundary that did not occur. |
+| 7 | If that observation is absent, leave the strike unset and do not trade the market. |
+| 8 | Refuse to trade on a stale raw feed or an incompletely covered roll-off range. |
+| 9 | Cap the model probability short of certainty. A Gaussian understates BTC jump risk. |
 
 ### Other points for a real-money system
 
-The simulator accepts these three points. Examine them again when real money is
-at risk.
-
-- **`getPriceAt` has no age limit.** It returns the newest observation at or
-  before the boundary, at any age. The history stays in memory across a
-  reconnect. Therefore a gap in the feed across a boundary can give an
-  observation that is tens of seconds old. An age limit on the strike lookup
-  makes this condition clear instead of silent.
-- **The clock dependency is small but real.** Each price carries a Chainlink
-  timestamp, so the host clock cannot corrupt the strike. The host clock still
-  controls the time of each action. The entry-window countdown, the window-open
-  test, and the market lifecycle steps all compare `marketNow()` against
-  instants from Polymarket. `marketNow()` syncs to `GET /time` on the CLOB. Keep
-  this sync. Chainlink observation timestamps cannot replace it, because their
-  variable lag of approximately 2 seconds replaces a measured offset with an
-  offset that nobody measures.
-- **Window coverage after a restart.** There is no replay, so a restart loses
-  the current window. Expect this behaviour and restart between windows.
+- **There is no replay.** Subscriptions start with the next update, so a restart
+  loses the current window's strike. Expect this and restart between windows.
+- **`getTwapAt` has no age limit.** It returns the newest observation at or
+  before the boundary at any age. A feed gap across a window open can therefore
+  give a strike that is tens of seconds old. An age limit makes this visible
+  instead of silent.
+- **The host clock still matters.** Each price carries a Chainlink timestamp, so
+  the host clock cannot corrupt the strike. It still controls when each action
+  happens. Keep the `GET /time` sync to the CLOB.

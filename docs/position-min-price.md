@@ -43,6 +43,12 @@ this.checkStopLoss(tokenId, bestBid);
 stops a database write on every tick for a position that the engine holds.
 Correctness does not depend on this guard.
 
+`trackMinBid` also stops at the window end, which is the same cutoff that
+`checkStopLoss` uses. Both must use it. After the window closes the book is thin
+and its quotes have no meaning. A tracker without this cutoff writes those
+quotes, which gives records whose minimum is below the stop level on trades that
+the stop could never have fired for.
+
 ### Monotonic write
 
 The code does not await these writes, so the order of completion is not certain.
@@ -100,6 +106,7 @@ bid. Only the recorded metric was wrong.
 | 6 | Write each extreme value with a monotonic conditional statement. Do not depend on the order of writes. Do not read the value and then write it. |
 | 7 | Use the in-memory guard only to decrease the number of writes. Do not use it for correctness. |
 | 8 | After a restart, read the extreme value from storage. Do not use the entry price again as the seed. |
+| 9 | Stop tracking at the same instant the trigger stops. A quote that the trigger cannot act on must not enter the metric. |
 
 ### Other points for a real-money system
 
