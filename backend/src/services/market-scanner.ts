@@ -70,6 +70,16 @@ export class MarketScanner extends EventEmitter {
     return this.discoveredCount;
   }
 
+  /**
+   * Forget which markets have been seen, for an admin wipe. Without this the
+   * scanner treats the markets still in flight as already emitted and the
+   * orchestrator never re-activates them.
+   */
+  reset(): void {
+    this.seenMarketIds.clear();
+    this.discoveredCount = 0;
+  }
+
   private computeWindowSlugs(windowConfig: WindowConfig): string[] {
     // Window boundaries are Polymarket's, so they must be derived from its clock.
     const nowSeconds = Math.floor(marketNow() / 1000);

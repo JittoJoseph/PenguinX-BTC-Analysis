@@ -116,7 +116,7 @@ export class MarketOrchestrator extends EventEmitter {
   private inFlightTokenIds: Set<string> = new Set();
   /** marketIds still awaiting btcPriceAtWindowStart */
   private pendingBtcFills: Set<string> = new Set();
-  private resolutionTimers: Map<string, ReturnType<typeof setInterval>> =
+  private resolutionTimers: Map<string, ReturnType<typeof setTimeout>> =
     new Map();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private readonly windowDurationMs = WINDOW_CONFIG.durationMs;
@@ -173,15 +173,8 @@ export class MarketOrchestrator extends EventEmitter {
     this.scanner.stop();
     this.wsWatcher.stop();
 
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
-
-    for (const [, timer] of this.resolutionTimers) {
-      clearTimeout(timer);
-    }
-    this.resolutionTimers.clear();
+    this.stopCleanupTimer();
+    this.clearResolutionTimers();
 
     logger.info("Market orchestrator stopped");
   }
@@ -190,26 +183,73 @@ export class MarketOrchestrator extends EventEmitter {
   pause(): void {
     this.paused = true;
     this.scanner.stop();
-
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
+    this.stopCleanupTimer();
 
     logger.warn("System paused — new positions blocked, existing tracked");
+  }
+
+  private stopCleanupTimer(): void {
+    if (!this.cleanupTimer) return;
+    clearInterval(this.cleanupTimer);
+    this.cleanupTimer = null;
+  }
+
+  private clearResolutionTimers(): void {
+    for (const [, timer] of this.resolutionTimers) clearTimeout(timer);
+    this.resolutionTimers.clear();
   }
 
   async resume(): Promise<void> {
     if (!this.paused) return;
     this.paused = false;
 
-    // Reload portfolio in case an admin wiped and reset it.
+    // Cash can move while paused: positions opened earlier still settle. The
+    // manager keeps memory and database in step, so this only matters when the
+    // row changed underneath us, which is exactly what a wipe does.
     await this.portfolioManager.reload();
 
     await this.scanner.start();
     this.cleanupTimer = setInterval(() => this.cleanupExpiredMarkets(), 10_000);
 
     logger.info("System resumed — trading active");
+  }
+
+  /**
+   * Drop all in-memory trading state so the process matches an empty database.
+   *
+   * A wipe deletes the trade rows but the orchestrator would otherwise keep
+   * holding the positions they described. Those orphans still settle, and
+   * settling one credits cash against a balance that no longer exists, which
+   * silently corrupts the fresh portfolio. Everything tied to the old session
+   * has to go at the same moment the rows do.
+   *
+   * Markets are not re-fetched here. The scanner rediscovers them on resume,
+   * and because the price buffer survives, a window whose open is still in the
+   * buffer gets its strike back — something a process restart would lose.
+   */
+  resetSessionState(): void {
+    this.clearResolutionTimers();
+
+    const subscribed = [...this.tokenToMarket.keys()];
+    if (subscribed.length > 0) this.wsWatcher.unsubscribe(subscribed);
+
+    this.openPositions.clear();
+    this.positionsByMarket.clear();
+    this.positionsByToken.clear();
+    this.inFlightTokenIds.clear();
+    this.activeMarkets.clear();
+    this.conditionIdMap.clear();
+    this.tokenToMarket.clear();
+    this.pendingBtcFills.clear();
+    this.cycleCount = 0;
+
+    this.scanner.reset();
+    this.strategyEngine.reset();
+
+    logger.warn(
+      { unsubscribedTokens: subscribed.length },
+      "Session state cleared",
+    );
   }
 
   isPaused(): boolean {
@@ -739,6 +779,13 @@ export class MarketOrchestrator extends EventEmitter {
         return;
       }
 
+      // Last check before any money moves: a wipe or pause can land while the
+      // book lookup and sizing above are running.
+      if (this.paused) {
+        this.strategyEngine.releaseMarket(opp.marketId);
+        return;
+      }
+
       const actualCost = execution.netCost;
       await this.portfolioManager.deductCash(actualCost);
 
@@ -1067,6 +1114,8 @@ export class MarketOrchestrator extends EventEmitter {
   ): Promise<void> {
     for (const [tradeId, pos] of this.openPositions) {
       if (pos.marketId !== marketId) continue;
+      // A wipe can land between iterations. Anything it cleared is gone.
+      if (!this.openPositions.has(tradeId)) continue;
 
       const isWin = pos.tokenId === winningTokenId;
       // Only what we still hold redeems; a partial stop already banked the rest.

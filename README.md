@@ -108,6 +108,31 @@ margin, forecast sd and the reason no trade was taken. Windows we skipped are th
 baseline: without them there is no way to tell a filter that works from one that
 simply never fires.
 
+## Admin operations
+
+Three endpoints, all requiring the admin password.
+
+| Action | Effect |
+|---|---|
+| `POST /api/admin/pause` | Stops new entries. Open positions stay tracked, keep their stop armed, and still settle. The price feed and order-book subscriptions stay live. |
+| `POST /api/admin/resume` | Reloads the portfolio row, restarts the scanner, resumes entries. |
+| `DELETE /api/admin/wipe` | Pauses, clears all in-memory session state, deletes trades, audit log, markets and the portfolio row, then reloads the fresh portfolio. Leaves the engine **paused**. |
+
+**Wipe then resume is enough — a process restart is not required.** The wipe
+clears open positions, active markets, settlement timers, order-book
+subscriptions, the scanner's seen-market memo and the strategy engine's
+traded-market set before it touches the database, so nothing from the old
+session survives to act against the new portfolio. Resume then rediscovers
+markets from scratch.
+
+Resuming is in one respect better than restarting: the BTC price buffer lives in
+memory and is not cleared, so a window whose open is still inside the buffer
+gets its strike back immediately. A restart loses that and skips the window.
+
+Pause is deliberately not a full stop. Positions opened before the pause must
+still be able to hit their stop and settle, so those paths are not gated on the
+paused flag.
+
 ## Architecture
 
 | Component   | Stack                                                      |
