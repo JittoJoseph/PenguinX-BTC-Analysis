@@ -318,14 +318,17 @@ export class ApiServer {
       async (req: Request, res: Response) => {
         try {
           const config = getConfig();
-
           const orchestrator = getMarketOrchestrator();
+
+          // Order matters. Stop new entries, drop the in-memory session so no
+          // orphaned position can settle against the new portfolio, and only
+          // then clear the rows.
           orchestrator.pause();
+          orchestrator.resetSessionState();
 
           await wipeAndResetPortfolio(config.portfolio.startingCapital);
-
-          const db = getDb();
-          await db.delete(schema.markets);
+          await getDb().delete(schema.markets);
+          await orchestrator.portfolioManager.reload();
 
           logger.warn("Database wiped and portfolio reset via admin endpoint");
           res.json({

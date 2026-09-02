@@ -52,7 +52,7 @@ export function SettingsPage() {
         setSuccess("Engine successfully resumed.");
       } else if (activeAction === "wipe") {
         await api.wipeSystem(password);
-        setSuccess("Database wiped successfully.");
+        setSuccess("Database wiped. Engine is paused — resume to start trading.");
       }
 
       await refetchStats();

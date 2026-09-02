@@ -256,4 +256,39 @@ describe("StrategyEngine", () => {
   it("returns null for an unregistered token", () => {
     expect(engine.evaluate("unknown", strongUp())).toBeNull();
   });
+
+  describe("reset", () => {
+    it("forgets registered markets", () => {
+      engine.updateQuote(UP, 0.6, 0.62);
+      engine.reset();
+      expect(engine.evaluate(UP, strongUp())).toBeNull();
+    });
+
+    it("unblocks a market that was already traded", () => {
+      const handler = vi.fn();
+      engine.on("opportunityDetected", handler);
+      engine.updateQuote(UP, 0.6, 0.62);
+      engine.evaluate(UP, strongUp());
+      expect(handler).toHaveBeenCalledOnce();
+
+      engine.reset();
+      engine.registerMarket("m1", UP, "Up", new Date(END), 100_000);
+      engine.updateQuote(UP, 0.6, 0.62);
+      engine.evaluate(UP, strongUp());
+
+      expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    it("clears counters and quotes", () => {
+      engine.updateQuote(UP, 0.6, 0.62);
+      engine.evaluate(UP, strongUp());
+      engine.reset();
+
+      const stats = engine.getStats();
+      expect(stats.watchedTokens).toBe(0);
+      expect(stats.triggersCount).toBe(0);
+      expect(stats.tradedMarkets).toBe(0);
+      expect(engine.getPriceState(UP)).toBeUndefined();
+    });
+  });
 });

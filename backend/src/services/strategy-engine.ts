@@ -88,6 +88,14 @@ export class StrategyEngine extends EventEmitter {
     this.tradedMarkets.delete(marketId);
   }
 
+  /** Drop every trace of the current session, for an admin wipe. */
+  reset(): void {
+    this.priceStates.clear();
+    this.watchedMarkets.clear();
+    this.tradedMarkets.clear();
+    this.triggersCount = 0;
+  }
+
   updateStrike(tokenId: string, strike: number): void {
     const market = this.watchedMarkets.get(tokenId);
     if (market) market.strike = strike;
