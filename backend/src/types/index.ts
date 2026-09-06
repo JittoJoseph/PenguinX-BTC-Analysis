@@ -50,12 +50,14 @@ export const ConfigSchema = z.object({
     startingCapital: z.number().min(1).max(10_000_000),
   }),
   strategy: z.object({
-    entryWindowOpenSeconds: z.number().min(5).max(120),
+    entryWindowOpenSeconds: z.number().min(5).max(900),
     entryWindowCloseSeconds: z.number().min(1).max(120),
     minEntryPrice: z.number().min(0.01).max(0.9),
     maxEntryPrice: z.number().min(0.1).max(0.99),
-    minModelEdge: z.number().min(0).max(0.5),
-    minSettlementSigmas: z.number().min(0).max(10),
+    /** Multiplier on the calibrated basis-point decided floor. 1 = as calibrated. */
+    decidedFloorMultiplier: z.number().min(0.5).max(5),
+    /** Multiple of the model sd the margin must also clear; raises the floor in volatile regimes. */
+    decidedSdMultiple: z.number().min(0).max(30),
     sigmaWindowMs: z.number().min(10_000).max(600_000),
     maxRawStalenessMs: z.number().min(1000).max(60_000),
     /** Stop trigger as a fraction of entry price. Always active. */
