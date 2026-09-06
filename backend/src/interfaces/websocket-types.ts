@@ -44,6 +44,12 @@ export interface BookUpdateEvent {
   timestamp: number;
 }
 
+export interface TradeEvent {
+  tokenId: string;
+  price: number;
+  timestamp: number;
+}
+
 export interface MarketResolvedEvent {
   marketId: string;
   conditionId: string;

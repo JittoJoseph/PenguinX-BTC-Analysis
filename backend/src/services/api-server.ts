@@ -460,6 +460,7 @@ export function buildLiveState() {
       sigmaWindowMs: config.strategy.sigmaWindowMs,
       decidedFloorMultiplier: config.strategy.decidedFloorMultiplier,
       decidedSdMultiple: config.strategy.decidedSdMultiple,
+      marketLivenessMs: config.strategy.marketLivenessMs,
       stopLossFraction: config.strategy.stopLossFraction,
       startingCapital: config.portfolio.startingCapital,
       positionBudgetUsd: FIXED_POSITION_BUDGET_USD,

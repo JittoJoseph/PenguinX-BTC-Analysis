@@ -55,7 +55,7 @@ export const ConfigSchema = z.object({
     minEntryPrice: z.number().min(0.01).max(0.9),
     maxEntryPrice: z.number().min(0.1).max(0.99),
     /** Multiplier on the calibrated basis-point decided floor. 1 = as calibrated. */
-    decidedFloorMultiplier: z.number().min(0.5).max(5),
+    decidedFloorMultiplier: z.number().min(0.1).max(5),
     /** Multiple of the model sd the margin must also clear; raises the floor in volatile regimes. */
     decidedSdMultiple: z.number().min(0).max(30),
     sigmaWindowMs: z.number().min(10_000).max(600_000),
@@ -65,6 +65,8 @@ export const ConfigSchema = z.object({
     scanIntervalMs: z.number().min(10000),
     /** Simulated submit→match round-trip; the book keeps moving in between. */
     executionLatencyMs: z.number().min(0).max(5000),
+    /** Skip a market whose CLOB has not printed a real fill this recently. */
+    marketLivenessMs: z.number().min(10_000).max(900_000),
   }),
   admin: z.object({
     password: z.string().min(1),

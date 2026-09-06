@@ -130,6 +130,7 @@ export interface LiveState {
     sigmaWindowMs: number;
     decidedFloorMultiplier: number;
     decidedSdMultiple: number;
+    marketLivenessMs: number;
     stopLossFraction: number;
     startingCapital: number;
     positionBudgetUsd: number;

@@ -9,6 +9,7 @@ import {
 import type {
   ClobWsMessage,
   BookUpdateEvent,
+  TradeEvent,
   MarketResolvedEvent,
   MarketSubscriptionMessage,
   SubscriptionUpdateMessage,
@@ -28,6 +29,7 @@ export class MarketWebSocketWatcher extends EventEmitter {
   private ws: WebSocket | null = null;
   private subscribedTokens: Set<string> = new Set();
   private books: Map<string, MaintainedBook> = new Map();
+  private lastTradeAt: Map<string, number> = new Map();
   private running = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -83,6 +85,7 @@ export class MarketWebSocketWatcher extends EventEmitter {
     tokenIds.forEach((id) => {
       this.subscribedTokens.delete(id);
       this.books.delete(id);
+      this.lastTradeAt.delete(id);
     });
 
     if (this.ws?.readyState === WebSocket.OPEN) {
@@ -108,6 +111,11 @@ export class MarketWebSocketWatcher extends EventEmitter {
         .sort((a, b) => (desc ? b[0] - a[0] : a[0] - b[0]))
         .map(([price, size]) => ({ price: String(price), size: String(size) }));
     return { bids: levels(book.bids, true), asks: levels(book.asks, false) };
+  }
+
+  /** Exchange time of the last real fill on this token, or null if none seen. */
+  getLastTradeAt(tokenId: string): number | null {
+    return this.lastTradeAt.get(tokenId) ?? null;
   }
 
   getBestBid(tokenId: string): number | null {
@@ -249,6 +257,19 @@ export class MarketWebSocketWatcher extends EventEmitter {
             touched.add(pc.asset_id);
           }
           for (const tokenId of touched) this.emitBookUpdate(tokenId, ts);
+        }
+        break;
+
+      case "last_trade_price":
+        if (msg.asset_id && msg.price) {
+          const price = parseFloat(msg.price);
+          if (!Number.isFinite(price)) break;
+          this.lastTradeAt.set(msg.asset_id, ts);
+          this.emit("trade", {
+            tokenId: msg.asset_id,
+            price,
+            timestamp: ts,
+          } satisfies TradeEvent);
         }
         break;
 
