@@ -20,7 +20,8 @@ const strategyConfig = {
   maxRawStalenessMs: 5_000,
   stopLossFraction: 0.35,
   scanIntervalMs: 60_000,
-  executionLatencyMs: 250,
+  executionLatencyMs: 50,
+  marketLivenessMs: 120_000,
 };
 
 vi.mock("../utils/config.js", () => ({
@@ -171,6 +172,7 @@ describe("StrategyEngine", () => {
     engine = new StrategyEngine();
     engine.registerMarket("m1", UP, "Up", new Date(END), PRICE);
     engine.registerMarket("m1", DOWN, "Down", new Date(END), PRICE);
+    engine.noteTrade(UP, NOW - 10_000);
   });
 
   const decidedUp = () => makeForecast({ rawNow: PRICE + 600 });
@@ -231,6 +233,24 @@ describe("StrategyEngine", () => {
     expect(engine.evaluate("t2", decidedUp())?.skipReason).toBe("no_strike");
   });
 
+  it("skips a market that has not printed a fill recently", () => {
+    engine.registerMarket("m4", "t4", "Up", new Date(END), PRICE);
+    engine.updateQuote("t4", 0.5, 0.52);
+    expect(engine.evaluate("t4", decidedUp())?.skipReason).toBe("market_stale");
+    engine.noteTrade("t4", NOW - 200_000);
+    expect(engine.evaluate("t4", decidedUp())?.skipReason).toBe("market_stale");
+    engine.noteTrade("t4", NOW - 30_000);
+    expect(engine.evaluate("t4", decidedUp())?.skipReason).toBeNull();
+  });
+
+  it("counts a fill on either side of the market as liveness", () => {
+    engine.registerMarket("m5", "t5u", "Up", new Date(END), PRICE);
+    engine.registerMarket("m5", "t5d", "Down", new Date(END), PRICE);
+    engine.updateQuote("t5u", 0.5, 0.52);
+    engine.noteTrade("t5d", NOW - 5_000);
+    expect(engine.evaluate("t5u", decidedUp())?.skipReason).toBeNull();
+  });
+
   it("reports outside the entry window without consuming the market", () => {
     engine.registerMarket("m3", "t3", "Up", new Date(NOW + 600_000), PRICE);
     engine.updateQuote("t3", 0.5, 0.52);
@@ -272,6 +292,7 @@ describe("StrategyEngine", () => {
 
       engine.registerMarket("m1", UP, "Up", new Date(END), PRICE);
       engine.updateQuote(UP, 0.5, 0.52);
+      engine.noteTrade(UP, NOW - 10_000);
       engine.evaluate(UP, decidedUp());
       expect(handler).toHaveBeenCalledTimes(2);
       expect(engine.getStats().tradedMarkets).toBe(1);

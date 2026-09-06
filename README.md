@@ -7,27 +7,29 @@
 [![Health Check](https://img.shields.io/website?url=https://market-api.jittojoseph.xyz/ping&label=health)](https://market-api.jittojoseph.xyz/ping)
 
 A paper-trading simulator for Polymarket's BTC 15-minute Up/Down markets. It
-watches live markets, works out when a window's outcome is already beyond
-reversal, and buys the winning side whenever the order book is still quoting it
-as if it were uncertain. Fills are simulated against the real order book.
+watches live markets, works out which side the settlement is heading for, and
+buys that side as a taker when the book still prices it as a discount. Fills are
+simulated against the real order book.
 
 No real money is traded.
 
-## The edge
+## The strategy
 
 These markets resolve on the **Chainlink BTC/USD 60-second TWAP**: `Up` wins
 when the TWAP at window close is at or above the TWAP at window open.
 
-The strategy holds no view on where BTC is going and no probability model to
-set against the market's. Both of those were tried and both lost: the book
-consistently out-forecast the model in every uncertain window, because makers
-watch exchange feeds that run about two seconds ahead of Chainlink.
+The engine holds no view on where BTC is going. It waits until the window is
+most of the way through, asks a single question — how far is the settlement
+forecast from the strike, relative to what the time left can still move it —
+and buys the favoured side if the book offers it below 0.85.
 
-What the book gets wrong is different. On thin windows, and during fast moves
-when makers step away, resting orders placed before the move are left standing.
-The move that made them stale also decided the outcome. A book still offering
-the winning side at 0.50–0.65 with the window $100 past the strike is not a
-forecast; it is an order nobody pulled. Those are the trades.
+It is deliberately not a certainty detector. A floor strict enough to be never
+wrong (100% on 383 real windows) turned out to be useless in practice: by the
+time the margin clears it, the book has already repriced to 1.00 and there is
+nothing to buy. The floor used here is 0.4× that calibrated table, the point
+where side accuracy is still ~98% but entries land around 0.5 a few times a
+day. That trade-off — a rare loss that the stop turns into a partial one,
+against wins that roughly double the stake — is the whole bet.
 
 ## How it works
 
@@ -36,61 +38,51 @@ and subscribed to over the CLOB WebSocket. Two RTDS feeds are consumed: the
 `crypto_prices_twap_sixty` series that settlement runs on, and the unsmoothed
 `crypto_prices_chainlink` series that drives it.
 
-**Strike.** The TWAP observed at the window open, and nothing else. A window
-whose open was not observed stays unstruck and is never traded.
+**Strike.** The TWAP observed at the window open. A window whose open was not
+observed stays unstruck and is never traded.
 
 **Forecast.** Inside the final minute the closing TWAP is a moving average that
 has already absorbed most of its inputs, so its expected value is computable
 from spot and the stretch about to roll out of the average. Beyond the final
 minute the expectation is simply spot.
 
-**Decided.** A window is decided when the forecast clears the strike by a floor
-that depends on time to close:
+**Favoured.** A side is favoured when the forecast clears the strike by a floor
+that depends on time to close — an empirical table in basis points of price,
+times `DECIDED_FLOOR_MULTIPLIER`, and never below `DECIDED_SD_MULTIPLE` model
+standard deviations. Basis points so it carries across price levels; the sd
+term so volatile regimes demand more.
 
-| seconds to close | floor (basis points of price) |
-|---|---|
-| < 15 | 1.3 |
-| 15–30 | 2.6 |
-| 30–60 | 6.5 |
-| 60–120 | 19.5 |
-| 120–300 | 32.5 |
-| > 300 | never |
+| seconds to close | calibrated floor (bp) | at 0.4× |
+|---|---|---|
+| < 15 | 1.3 | 0.5 |
+| 15–30 | 2.6 | 1.0 |
+| 30–60 | 6.5 | 2.6 |
+| 60–120 | 19.5 | 7.8 |
+| 120–300 | 32.5 | 13.0 |
+| > 300 | never | never |
 
-The floor was calibrated on 383 real windows of 1-second BTC data as the
-smallest margin at which the forecast side won 100% of the time, in every band,
-on every day, in every volatility quartile. It is expressed in basis points so
-it carries across price levels, and it is raised to seven model standard
-deviations whenever that is larger, so volatile regimes demand more margin.
-Nothing ever lowers it. There is no Gaussian anywhere: BTC's tails at these
-horizons are hundreds of times fatter than one, and a trailing sigma measured
-in a quiet minute makes small margins look certain.
+**Live market.** No entry unless the market's CLOB has printed a real fill in
+the last 120 seconds. Every fill the simulator ever took at a "stale" price was
+on a market Polymarket had stopped matching during a declared incident; those
+fills could not have happened. This one rule blocked 100% of such windows in
+the history and under 2% of healthy ones.
 
 **Entry.** From 300 seconds before close down to 5, on every settlement tick,
-buy the decided side if its executable ask sits within `[0.15, 0.90]`. One
-trade per window. Orders are held 250 ms and matched against the book as it
-stands after the hold, which is what Polymarket does on these markets.
-
-The price cap is what makes the risk arithmetic work. A stop is only a trigger
-and the fill can be most of the position, so entries have to pay for that with
-real upside. At 0.90 a win still returns 11%; near 0.50 it returns 100%. If the
-book has repriced to 0.99, there is nothing to do.
+buy the favoured side if its executable ask sits within `[0.15, 0.85]`. One
+trade per window. The order is held for Polymarket's 50 ms taker delay and
+matched against the book as it stands after the hold.
 
 **Exit.** A stop fires when the executable bid falls to 65% of the entry price;
 otherwise the position rides to oracle resolution. The stop is always on and
-cannot be disabled. The trigger is a fraction of entry rather than a fixed
-number of cents because entries span 0.15 to 0.90: a 25c delta would be 28% of a
-0.90 position, 83% of a 0.30 one, and unreachable below 0.25.
+cannot be disabled. The trigger only decides *when* to sell: the order is
+matched against whatever the bid side actually holds, walked to the bottom of
+the book with no limit, so a collapsed book produces a near-total loss. A book
+too thin to absorb the whole position leaves a remainder, which stays open with
+the trigger re-armed.
 
-The trigger only decides *when* to sell. The order is matched against whatever
-the bid side actually holds, walked to the bottom of the book with no limit, so
-a collapsed book produces a near-total loss. There is no price floor and no
-logic that can refuse a bad fill. A book too thin to absorb the whole position
-leaves a remainder, which stays open with the trigger re-armed and is either
-sold as liquidity returns or redeemed at settlement.
-
-**Execution.** Simulated FAK taker orders walk the real ask side level by
-level, so fills reflect actual depth, partial fills, slippage and fees. The
-taker fee is Polymarket's published crypto schedule, `shares x 0.07 x p x (1-p)`.
+**Execution.** Simulated FAK taker orders walk the real book level by level, so
+fills reflect actual depth, partial fills, slippage and fees. The taker fee is
+Polymarket's published crypto schedule, `shares × 0.07 × p × (1−p)`.
 
 All parameters are environment-tunable; see [`backend/.env.example`](backend/.env.example).
 
@@ -107,11 +99,11 @@ real-money system:
 ## Evaluation data
 
 Every window writes one `audit_log` row under category `EVALUATION` at
-cleanup: which side became decided and when, how many seconds it stayed
-decided, and the cheapest ask the book offered on that side while it was —
-whether or not that ask was inside the price band. Windows we skipped are the
-baseline: that last number, across every window, is what says whether the price
-cap sits where the opportunities are.
+cleanup: which side became favoured and when, how many seconds it stayed so,
+the cheapest ask the book offered on that side meanwhile, and the last reason
+the engine gave for not trading — including `market_stale`. Untraded windows
+are the baseline for whether the price cap and floor sit where the
+opportunities are.
 
 ## Admin operations
 

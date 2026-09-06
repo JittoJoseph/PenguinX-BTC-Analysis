@@ -20,6 +20,7 @@ export interface MarketOpportunity {
 export type SkipReason =
   | "outside_entry_window"
   | "no_strike"
+  | "market_stale"
   | "not_decided"
   | "quote_missing"
   | "price_band";
@@ -48,20 +49,18 @@ interface WatchedMarket {
 }
 
 /**
- * Buys the winning side of a window that is already decided, whenever the book
- * still offers it cheaply.
+ * Buys the probable side of a window at a discount.
  *
- * There is no probability model and no view against the market. The forecast
- * only answers one question — has BTC moved far enough from the strike, with
- * little enough time left, that the outcome is beyond any plausible reversal —
- * and the book answers the other: is anyone still quoting that side as if it
- * were uncertain. The edge lives in resting orders that were placed before the
- * move and never pulled, typically on thin windows where makers have stepped
- * away. Against a book that has repriced there is nothing to do.
+ * The forecast says which side is ahead and whether the margin clears the
+ * floor for the time left; the book says what that side costs. A trade also
+ * needs the market itself to have printed a real fill recently. That last
+ * condition keeps the engine out of halted books: every fill it ever took at a
+ * "stale" price was on a market the exchange had stopped matching.
  */
 export class StrategyEngine extends EventEmitter {
   private priceStates: Map<string, TokenPriceState> = new Map();
   private watchedMarkets: Map<string, WatchedMarket> = new Map();
+  private lastTradeByMarket: Map<string, number> = new Map();
   private tradedMarkets: Set<string> = new Set();
   private triggersCount = 0;
 
@@ -76,8 +75,12 @@ export class StrategyEngine extends EventEmitter {
   }
 
   unregisterMarket(tokenId: string): void {
+    const market = this.watchedMarkets.get(tokenId);
     this.watchedMarkets.delete(tokenId);
     this.priceStates.delete(tokenId);
+    if (market && ![...this.watchedMarkets.values()].some((m) => m.marketId === market.marketId)) {
+      this.lastTradeByMarket.delete(market.marketId);
+    }
   }
 
   releaseMarket(marketId: string): void {
@@ -88,6 +91,7 @@ export class StrategyEngine extends EventEmitter {
   reset(): void {
     this.priceStates.clear();
     this.watchedMarkets.clear();
+    this.lastTradeByMarket.clear();
     this.tradedMarkets.clear();
     this.triggersCount = 0;
   }
@@ -99,6 +103,14 @@ export class StrategyEngine extends EventEmitter {
 
   updateQuote(tokenId: string, bestBid: number, bestAsk: number): void {
     this.priceStates.set(tokenId, { bestBid, bestAsk, lastUpdate: marketNow() });
+  }
+
+  /** A real fill printed on either side of the market. */
+  noteTrade(tokenId: string, timestamp: number): void {
+    const market = this.watchedMarkets.get(tokenId);
+    if (!market) return;
+    const prev = this.lastTradeByMarket.get(market.marketId) ?? 0;
+    if (timestamp > prev) this.lastTradeByMarket.set(market.marketId, timestamp);
   }
 
   getPriceState(tokenId: string): TokenPriceState | undefined {
@@ -116,8 +128,8 @@ export class StrategyEngine extends EventEmitter {
   /**
    * Score one token against a settlement forecast. Returns the evaluation so
    * the caller can record what was seen even when nothing is bought, and emits
-   * `opportunityDetected` when the token is the decided side and its ask is
-   * inside the band.
+   * `opportunityDetected` when the token is the favoured side, the market is
+   * live, and its ask is inside the band.
    */
   evaluate(tokenId: string, forecast: SettlementForecast): Evaluation | null {
     const market = this.watchedMarkets.get(tokenId);
@@ -125,7 +137,8 @@ export class StrategyEngine extends EventEmitter {
     if (this.tradedMarkets.has(market.marketId)) return null;
 
     const config = getConfig();
-    const secondsToEnd = (market.endDate.getTime() - marketNow()) / 1000;
+    const now = marketNow();
+    const secondsToEnd = (market.endDate.getTime() - now) / 1000;
     const quote = this.priceStates.get(tokenId);
     const base = {
       marketId: market.marketId,
@@ -142,6 +155,10 @@ export class StrategyEngine extends EventEmitter {
       return { ...base, skipReason: "outside_entry_window" };
     }
     if (market.strike === null) return { ...base, skipReason: "no_strike" };
+    const lastTrade = this.lastTradeByMarket.get(market.marketId);
+    if (lastTrade === undefined || now - lastTrade > config.strategy.marketLivenessMs) {
+      return { ...base, skipReason: "market_stale" };
+    }
     if (forecast.decidedSide !== market.outcomeLabel) {
       return { ...base, skipReason: "not_decided" };
     }
@@ -179,7 +196,7 @@ export class StrategyEngine extends EventEmitter {
         sd: forecast.sd.toFixed(2),
         secondsToEnd: secondsToEnd.toFixed(1),
       },
-      "Opportunity detected (decided window, stale ask)",
+      "Opportunity detected",
     );
 
     this.emit("opportunityDetected", opportunity);

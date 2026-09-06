@@ -312,6 +312,10 @@ export function DashboardPage() {
                     value={stats.config.decidedSdMultiple.toString()}
                   />
                   <StatRow
+                    label="Market Liveness"
+                    value={`fill within ${Math.round(stats.config.marketLivenessMs / 1000)}s`}
+                  />
+                  <StatRow
                     label="Stop Loss"
                     value={`${(stats.config.stopLossFraction * 100).toFixed(0)}% below entry`}
                     accent

@@ -40,6 +40,7 @@ import { PortfolioManager } from "./portfolio-manager.js";
 
 import type {
   BookUpdateEvent,
+  TradeEvent,
   MarketResolvedEvent,
   BtcPriceData,
 } from "../interfaces/websocket-types.js";
@@ -426,6 +427,10 @@ export class MarketOrchestrator extends EventEmitter {
 
     this.wsWatcher.on("bookUpdate", (ev: BookUpdateEvent) =>
       this.onBookUpdate(ev),
+    );
+
+    this.wsWatcher.on("trade", (ev: TradeEvent) =>
+      this.strategyEngine.noteTrade(ev.tokenId, ev.timestamp),
     );
 
     this.wsWatcher.on("marketResolved", (ev: MarketResolvedEvent) =>

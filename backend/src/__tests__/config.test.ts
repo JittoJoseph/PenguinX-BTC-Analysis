@@ -19,6 +19,7 @@ const STRATEGY_KEYS = [
   "MAX_RAW_STALENESS_MS",
   "STOP_LOSS_FRACTION",
   "EXECUTION_LATENCY_MS",
+  "MARKET_LIVENESS_MS",
   "SCAN_INTERVAL_MS",
   "STARTING_CAPITAL",
 ];
@@ -72,14 +73,15 @@ describe("configuration", () => {
       entryWindowOpenSeconds: 2000,
       entryWindowCloseSeconds: 5,
       minEntryPrice: 0.15,
-      maxEntryPrice: 0.9,
-      decidedFloorMultiplier: 1,
-      decidedSdMultiple: 7,
+      maxEntryPrice: 0.85,
+      decidedFloorMultiplier: 0.4,
+      decidedSdMultiple: 3,
       sigmaWindowMs: 180_000,
       maxRawStalenessMs: 5_000,
       stopLossFraction: 0.35,
       scanIntervalMs: 60_000,
-      executionLatencyMs: 250,
+      executionLatencyMs: 50,
+      marketLivenessMs: 120_000,
     });
     expect(result.success).toBe(false);
   });
