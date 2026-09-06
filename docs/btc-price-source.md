@@ -137,7 +137,12 @@ Measured against live data, the residual matches the closed form closely:
 | 60s | 0.58 | $22.56 | $17.93 | $31.05 |
 
 Beyond `tau = W` the roll-off term is zero and only the variance correction
-remains, which is why the entry window closes at 50 seconds.
+remains. The strategy does not turn the forecast into a probability. Real BTC
+tails at these horizons are hundreds of times fatter than a Gaussian, and a
+trailing sigma measured in a quiet regime makes a small margin look certain. A
+window counts as decided only when the margin clears an empirical floor, in
+basis points of price by time to close, that was calibrated to 100% accuracy on
+real windows and is raised, never lowered, by the model sd.
 
 ### Data gates
 
@@ -163,7 +168,7 @@ The forecast is only as good as its inputs, so three conditions block a trade:
 | 6 | Use the TWAP observation at the window-open instant as the strike. Do not query a boundary that did not occur. |
 | 7 | If that observation is absent, leave the strike unset and do not trade the market. |
 | 8 | Refuse to trade on a stale raw feed or an incompletely covered roll-off range. |
-| 9 | Cap the model probability short of certainty. A Gaussian understates BTC jump risk. |
+| 9 | Never convert the forecast into a Gaussian probability. Decide with an empirical margin floor in basis points of price, raised by the model sd and never lowered by it. |
 
 ### Other points for a real-money system
 
