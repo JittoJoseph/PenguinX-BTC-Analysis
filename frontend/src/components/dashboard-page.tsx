@@ -304,12 +304,12 @@ export function DashboardPage() {
                     value={`${Math.round(stats.config.sigmaWindowMs / 1000)}s`}
                   />
                   <StatRow
-                    label="Min Model Edge"
-                    value={stats.config.minModelEdge.toString()}
+                    label="Decided Floor ×"
+                    value={stats.config.decidedFloorMultiplier.toString()}
                   />
                   <StatRow
-                    label="Min Settle Sigmas"
-                    value={stats.config.minSettlementSigmas.toString()}
+                    label="Decided SD Multiple"
+                    value={stats.config.decidedSdMultiple.toString()}
                   />
                   <StatRow
                     label="Stop Loss"

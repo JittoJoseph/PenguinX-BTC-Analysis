@@ -85,8 +85,7 @@ export function TradeDetailPopup({
   const btcAtEntry = num(trade.twapAtEntry);
   const strike = num(trade.strike);
   const distance = num(trade.forecastMarginUsd);
-  const modelProb = num(trade.modelProb);
-  const modelEdge = num(trade.modelEdge);
+  const decidedFloor = num(trade.decidedFloorUsd);
   const forecastSd = num(trade.forecastSdUsd);
   const enteredAt = num(trade.secondsToEnd);
 
@@ -243,14 +242,18 @@ export function TradeDetailPopup({
                 value={`$${forecastSd.toFixed(2)}`}
               />
             )}
-            {modelProb !== null && (
-              <Cell label="MODEL P" value={modelProb.toFixed(3)} />
-            )}
-            {modelEdge !== null && (
+            {decidedFloor !== null && (
               <Cell
-                label="MODEL EDGE"
-                hint="Model probability minus the ask paid"
-                value={modelEdge.toFixed(3)}
+                label="DECIDED FLOOR"
+                hint="Margin the window had to clear to count as decided"
+                value={`$${decidedFloor.toFixed(2)}`}
+              />
+            )}
+            {distance !== null && decidedFloor !== null && decidedFloor > 0 && (
+              <Cell
+                label="MARGIN / FLOOR"
+                hint="How far past the decided threshold the entry was"
+                value={`${(Math.abs(distance) / decidedFloor).toFixed(1)}×`}
               />
             )}
             {enteredAt !== null && (
