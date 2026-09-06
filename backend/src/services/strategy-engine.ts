@@ -14,29 +14,21 @@ export interface MarketOpportunity {
   bestBid: number;
   strike: number;
   forecast: SettlementForecast;
-  /** Model probability for the side being bought. */
-  modelProb: number;
-  /** modelProb minus the ask actually paid. */
-  edge: number;
   secondsToEnd: number;
 }
 
 export type SkipReason =
   | "outside_entry_window"
   | "no_strike"
-  | "no_forecast"
+  | "not_decided"
   | "quote_missing"
-  | "price_band"
-  | "weak_margin"
-  | "insufficient_edge";
+  | "price_band";
 
 export interface Evaluation {
   marketId: string;
   tokenId: string;
   outcomeLabel: string;
-  bestAsk: number;
-  modelProb: number;
-  edge: number;
+  bestAsk: number | null;
   forecast: SettlementForecast;
   skipReason: SkipReason | null;
 }
@@ -56,12 +48,16 @@ interface WatchedMarket {
 }
 
 /**
- * Buys the side whose settlement-TWAP forecast disagrees with the book.
+ * Buys the winning side of a window that is already decided, whenever the book
+ * still offers it cheaply.
  *
- * The forecast leans on structure rather than on a view of where BTC is going:
- * inside the final minute the closing 60-second TWAP is largely fixed already,
- * so its expected value and its remaining uncertainty are both computable. When
- * that lands far enough from what the book charges, the difference is the trade.
+ * There is no probability model and no view against the market. The forecast
+ * only answers one question — has BTC moved far enough from the strike, with
+ * little enough time left, that the outcome is beyond any plausible reversal —
+ * and the book answers the other: is anyone still quoting that side as if it
+ * were uncertain. The edge lives in resting orders that were placed before the
+ * move and never pulled, typically on thin windows where makers have stepped
+ * away. Against a book that has repriced there is nothing to do.
  */
 export class StrategyEngine extends EventEmitter {
   private priceStates: Map<string, TokenPriceState> = new Map();
@@ -118,9 +114,10 @@ export class StrategyEngine extends EventEmitter {
   }
 
   /**
-   * Score one token against a settlement forecast. Returns the evaluation so the
-   * caller can record what the model saw even when nothing is bought, and emits
-   * `opportunityDetected` when the trade clears every gate.
+   * Score one token against a settlement forecast. Returns the evaluation so
+   * the caller can record what was seen even when nothing is bought, and emits
+   * `opportunityDetected` when the token is the decided side and its ask is
+   * inside the band.
    */
   evaluate(tokenId: string, forecast: SettlementForecast): Evaluation | null {
     const market = this.watchedMarkets.get(tokenId);
@@ -129,20 +126,12 @@ export class StrategyEngine extends EventEmitter {
 
     const config = getConfig();
     const secondsToEnd = (market.endDate.getTime() - marketNow()) / 1000;
-
     const quote = this.priceStates.get(tokenId);
-    const modelProb =
-      market.outcomeLabel === "Up" ? forecast.probUp : 1 - forecast.probUp;
-    const bestAsk = quote?.bestAsk ?? 1;
-    const edge = modelProb - bestAsk;
-
     const base = {
       marketId: market.marketId,
       tokenId,
       outcomeLabel: market.outcomeLabel,
-      bestAsk,
-      modelProb,
-      edge,
+      bestAsk: quote?.bestAsk ?? null,
       forecast,
     };
 
@@ -153,6 +142,9 @@ export class StrategyEngine extends EventEmitter {
       return { ...base, skipReason: "outside_entry_window" };
     }
     if (market.strike === null) return { ...base, skipReason: "no_strike" };
+    if (forecast.decidedSide !== market.outcomeLabel) {
+      return { ...base, skipReason: "not_decided" };
+    }
     if (!quote || quote.bestAsk <= 0 || quote.bestAsk >= 1 || quote.bestBid <= 0) {
       return { ...base, skipReason: "quote_missing" };
     }
@@ -161,15 +153,6 @@ export class StrategyEngine extends EventEmitter {
       quote.bestAsk > config.strategy.maxEntryPrice
     ) {
       return { ...base, skipReason: "price_band" };
-    }
-
-    const signedSigmas =
-      market.outcomeLabel === "Up" ? forecast.sigmas : -forecast.sigmas;
-    if (signedSigmas < config.strategy.minSettlementSigmas) {
-      return { ...base, skipReason: "weak_margin" };
-    }
-    if (edge < config.strategy.minModelEdge) {
-      return { ...base, skipReason: "insufficient_edge" };
     }
 
     this.tradedMarkets.add(market.marketId);
@@ -183,8 +166,6 @@ export class StrategyEngine extends EventEmitter {
       bestBid: quote.bestBid,
       strike: market.strike,
       forecast,
-      modelProb,
-      edge,
       secondsToEnd,
     };
 
@@ -193,18 +174,16 @@ export class StrategyEngine extends EventEmitter {
         marketId: market.marketId,
         outcome: market.outcomeLabel,
         ask: quote.bestAsk.toFixed(3),
-        modelProb: modelProb.toFixed(3),
-        edge: edge.toFixed(3),
         margin: forecast.margin.toFixed(2),
+        floor: forecast.floor.toFixed(2),
         sd: forecast.sd.toFixed(2),
-        sigmas: forecast.sigmas.toFixed(2),
         secondsToEnd: secondsToEnd.toFixed(1),
       },
-      "Opportunity detected (twap roll-off)",
+      "Opportunity detected (decided window, stale ask)",
     );
 
     this.emit("opportunityDetected", opportunity);
-    return { ...base, bestAsk: quote.bestAsk, skipReason: null };
+    return { ...base, skipReason: null };
   }
 }
 
