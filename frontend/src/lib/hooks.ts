@@ -592,8 +592,8 @@ export function useActivityLog() {
       const btc = trade.twapAtEntry
         ? ` BTC $${parseFloat(trade.twapAtEntry).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
         : "";
-      const zStr = trade.modelEdge
-        ? ` edge:${parseFloat(trade.modelEdge).toFixed(3)}`
+      const zStr = trade.forecastMarginUsd
+        ? ` margin:$${parseFloat(trade.forecastMarginUsd).toFixed(0)}`
         : "";
 
       const entry: ActivityEntry = {

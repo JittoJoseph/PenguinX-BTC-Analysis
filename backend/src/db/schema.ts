@@ -84,8 +84,7 @@ export const simulatedTrades = pgTable(
       scale: 4,
     }),
     forecastSdUsd: decimal("forecast_sd_usd", { precision: 12, scale: 4 }),
-    modelProb: decimal("model_prob", { precision: 8, scale: 6 }),
-    modelEdge: decimal("model_edge", { precision: 8, scale: 6 }),
+    decidedFloorUsd: decimal("decided_floor_usd", { precision: 12, scale: 4 }),
     secondsToEnd: decimal("seconds_to_end", { precision: 8, scale: 2 }),
     minPriceDuringPosition: decimal("min_price_during_position", {
       precision: 18,

@@ -7,8 +7,9 @@
 [![Health Check](https://img.shields.io/website?url=https://market-api.jittojoseph.xyz/ping&label=health)](https://market-api.jittojoseph.xyz/ping)
 
 A paper-trading simulator for Polymarket's BTC 15-minute Up/Down markets. It
-watches live markets, forecasts the value the market settles on, buys whichever
-side the book misprices, and simulates fills against the real order book.
+watches live markets, works out when a window's outcome is already beyond
+reversal, and buys the winning side whenever the order book is still quoting it
+as if it were uncertain. Fills are simulated against the real order book.
 
 No real money is traded.
 
@@ -17,76 +18,79 @@ No real money is traded.
 These markets resolve on the **Chainlink BTC/USD 60-second TWAP**: `Up` wins
 when the TWAP at window close is at or above the TWAP at window open.
 
-A 60-second TWAP is a moving average, so inside the final minute part of the
-closing value is already fixed by prices that have happened. Over the next `tau`
-seconds the average sheds its oldest `tau` seconds and takes on `tau` seconds of
-new price, which makes its expected move computable rather than random:
+The strategy holds no view on where BTC is going and no probability model to
+set against the market's. Both of those were tried and both lost: the book
+consistently out-forecast the model in every uncertain window, because makers
+watch exchange feeds that run about two seconds ahead of Chainlink.
 
-```
-E[TWAP_close] = TWAP_now + (tau / 60) * (spot_now - mean of the stretch rolling out)
-```
-
-Only the incoming stretch is unknown, and because it arrives as an average its
-variance grows with `tau^3` rather than `tau`:
-
-```
-sd[TWAP_close] = sigma_raw * tau^1.5 / (sqrt(3) * 60)
-```
-
-Both effects are large. Measured against live Chainlink data, the roll-off term
-predicts the TWAP 10 seconds out with an R-squared of 0.98, cutting mean absolute
-error by 88% versus reading the current TWAP; at 30 seconds it is still 0.90.
-Settlement uncertainty comes out roughly 3.5x tighter than a random-walk model
-says at 30 seconds out, and the measured residual matches the closed form above
-almost exactly.
-
-None of this is a view on where BTC is going. It is a statement about a smoothed
-series whose recent history is already observable. When the resulting probability
-lands far enough from what the book is charging, that gap is the trade.
+What the book gets wrong is different. On thin windows, and during fast moves
+when makers step away, resting orders placed before the move are left standing.
+The move that made them stale also decided the outcome. A book still offering
+the winning side at 0.50–0.65 with the window $100 past the strike is not a
+forecast; it is an order nobody pulled. Those are the trades.
 
 ## How it works
 
-Markets are discovered by deterministic slug (`btc-updown-15m-<windowStart>`) and
-subscribed to over the CLOB WebSocket. Two RTDS feeds are consumed: the
+Markets are discovered by deterministic slug (`btc-updown-15m-<windowStart>`)
+and subscribed to over the CLOB WebSocket. Two RTDS feeds are consumed: the
 `crypto_prices_twap_sixty` series that settlement runs on, and the unsmoothed
-`crypto_prices_chainlink` series that drives it. Volatility and the roll-off term
-both come from the raw feed, because measuring either on the TWAP understates it
-by a factor of sqrt(60).
+`crypto_prices_chainlink` series that drives it.
 
 **Strike.** The TWAP observed at the window open, and nothing else. A window
 whose open was not observed stays unstruck and is never traded.
 
-**Entry.** Between 50 and 10 seconds before close, each market is scored on every
-settlement tick. Buy when the model probability for a side beats its executable
-ask by at least 6 points, the forecast clears the strike by at least 0.35
-settlement standard deviations, and the ask sits within `[0.15, 0.90]`. One trade
-per window.
+**Forecast.** Inside the final minute the closing TWAP is a moving average that
+has already absorbed most of its inputs, so its expected value is computable
+from spot and the stretch about to roll out of the average. Beyond the final
+minute the expectation is simply spot.
 
-The price cap is what makes the risk arithmetic work. A stop is only a trigger —
-the fill lands wherever liquidity is, and near expiry that can be most of the
-position — so entries have to pay for that possibility with real upside. At 0.90
-a win still returns 11%; nearer 0.50 it returns 100%.
+**Decided.** A window is decided when the forecast clears the strike by a floor
+that depends on time to close:
 
-**Exit.** A stop fires when the executable bid falls to 65% of the entry price,
+| seconds to close | floor (basis points of price) |
+|---|---|
+| < 15 | 1.3 |
+| 15–30 | 2.6 |
+| 30–60 | 6.5 |
+| 60–120 | 19.5 |
+| 120–300 | 32.5 |
+| > 300 | never |
+
+The floor was calibrated on 383 real windows of 1-second BTC data as the
+smallest margin at which the forecast side won 100% of the time, in every band,
+on every day, in every volatility quartile. It is expressed in basis points so
+it carries across price levels, and it is raised to seven model standard
+deviations whenever that is larger, so volatile regimes demand more margin.
+Nothing ever lowers it. There is no Gaussian anywhere: BTC's tails at these
+horizons are hundreds of times fatter than one, and a trailing sigma measured
+in a quiet minute makes small margins look certain.
+
+**Entry.** From 300 seconds before close down to 5, on every settlement tick,
+buy the decided side if its executable ask sits within `[0.15, 0.90]`. One
+trade per window. Orders are held 250 ms and matched against the book as it
+stands after the hold, which is what Polymarket does on these markets.
+
+The price cap is what makes the risk arithmetic work. A stop is only a trigger
+and the fill can be most of the position, so entries have to pay for that with
+real upside. At 0.90 a win still returns 11%; near 0.50 it returns 100%. If the
+book has repriced to 0.99, there is nothing to do.
+
+**Exit.** A stop fires when the executable bid falls to 65% of the entry price;
 otherwise the position rides to oracle resolution. The stop is always on and
-cannot be disabled.
+cannot be disabled. The trigger is a fraction of entry rather than a fixed
+number of cents because entries span 0.15 to 0.90: a 25c delta would be 28% of a
+0.90 position, 83% of a 0.30 one, and unreachable below 0.25.
 
-The trigger is a fraction of entry rather than a fixed number of cents because
-entries span 0.15 to 0.90. A 25c delta is 28% of a 0.90 position, 83% of a 0.30
-one, and unreachable below 0.25 — which would leave the cheapest positions with
-no stop at all. A fraction holds the risk per position constant across the band.
+The trigger only decides *when* to sell. The order is matched against whatever
+the bid side actually holds, walked to the bottom of the book with no limit, so
+a collapsed book produces a near-total loss. There is no price floor and no
+logic that can refuse a bad fill. A book too thin to absorb the whole position
+leaves a remainder, which stays open with the trigger re-armed and is either
+sold as liquidity returns or redeemed at settlement.
 
-The trigger only decides *when* to sell. The order is then matched against
-whatever the bid side actually holds, walked to the bottom of the book with no
-limit, so a collapsed book produces a near-total loss. There is no price floor
-and no logic that can refuse a bad fill. A book too thin to absorb the whole
-position leaves a remainder, which stays open with the trigger re-armed and is
-either sold as liquidity returns or redeemed at settlement.
-
-**Execution.** Simulated FAK taker orders walk the real ask side level by level,
-so fills reflect actual depth, partial fills, slippage and fees. The taker fee is
-Polymarket's published crypto schedule, `shares x 0.07 x p x (1-p)`, which peaks
-at 50c — precisely where this strategy trades most.
+**Execution.** Simulated FAK taker orders walk the real ask side level by
+level, so fills reflect actual depth, partial fills, slippage and fees. The
+taker fee is Polymarket's published crypto schedule, `shares x 0.07 x p x (1-p)`.
 
 All parameters are environment-tunable; see [`backend/.env.example`](backend/.env.example).
 
@@ -102,11 +106,12 @@ real-money system:
 
 ## Evaluation data
 
-Every window that reaches the entry stage writes one `audit_log` row under
-category `EVALUATION`, holding both sides' ask, model probability, edge, forecast
-margin, forecast sd and the reason no trade was taken. Windows we skipped are the
-baseline: without them there is no way to tell a filter that works from one that
-simply never fires.
+Every window writes one `audit_log` row under category `EVALUATION` at
+cleanup: which side became decided and when, how many seconds it stayed
+decided, and the cheapest ask the book offered on that side while it was —
+whether or not that ask was inside the price band. Windows we skipped are the
+baseline: that last number, across every window, is what says whether the price
+cap sits where the opportunities are.
 
 ## Admin operations
 
@@ -135,10 +140,10 @@ paused flag.
 
 ## Architecture
 
-| Component   | Stack                                                      |
-| ----------- | ---------------------------------------------------------- |
-| Backend     | Node.js 22+, TypeScript, PostgreSQL (Supabase) via Drizzle |
-| Frontend    | Next.js dashboard, live updates over WebSocket             |
+| Component   | Stack                                                       |
+| ----------- | ----------------------------------------------------------- |
+| Backend     | Node.js 22+, TypeScript, PostgreSQL (Supabase) via Drizzle  |
+| Frontend    | Next.js dashboard, live updates over WebSocket              |
 | Market data | Polymarket Gamma API, CLOB WebSocket, RTDS TWAP + raw feeds |
 
 Backend services are single-purpose and wired through one orchestrator: market
