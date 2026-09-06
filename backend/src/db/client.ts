@@ -107,8 +107,7 @@ export async function createSimulatedTrade(data: {
   forecastSettlement?: number;
   forecastMarginUsd?: number;
   forecastSdUsd?: number;
-  modelProb?: number;
-  modelEdge?: number;
+  decidedFloorUsd?: number;
   secondsToEnd?: number;
   minPriceDuringPosition?: string;
 }) {
@@ -136,8 +135,7 @@ export async function createSimulatedTrade(data: {
       forecastSettlement: data.forecastSettlement?.toString() ?? null,
       forecastMarginUsd: data.forecastMarginUsd?.toString() ?? null,
       forecastSdUsd: data.forecastSdUsd?.toString() ?? null,
-      modelProb: data.modelProb?.toString() ?? null,
-      modelEdge: data.modelEdge?.toString() ?? null,
+      decidedFloorUsd: data.decidedFloorUsd?.toString() ?? null,
       secondsToEnd: data.secondsToEnd?.toString() ?? null,
       minPriceDuringPosition: data.minPriceDuringPosition ?? null,
       status: "OPEN",

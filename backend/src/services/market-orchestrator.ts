@@ -24,6 +24,7 @@ import {
   StrategyEngine,
   type MarketOpportunity,
   type Evaluation,
+  type SkipReason,
 } from "./strategy-engine.js";
 import { forecastSettlement, rollingOutRange } from "./settlement-model.js";
 import {
@@ -59,11 +60,38 @@ interface ActiveMarketState {
   btcPriceAtWindowStart: number | null;
   outcomes: string[];
   lastPrices: Record<string, { bid: number; ask: number }>;
-  lastEvaluations: Record<string, Evaluation>;
+  summary: WindowSummary;
   subscribedWs: boolean;
   resolved: boolean;
   rawMarket: any;
 }
+
+/**
+ * What the window looked like from the strategy's side, kept per market and
+ * written once at cleanup. The untraded windows are the baseline: without the
+ * cheapest ask seen while decided there is no way to tell whether the price cap
+ * is set where the opportunities are.
+ */
+interface WindowSummary {
+  decidedSeconds: number;
+  firstDecidedTau: number | null;
+  decidedSide: "Up" | "Down" | null;
+  /** Cheapest ask seen on the decided side while decided, any price. */
+  minDecidedAsk: number | null;
+  minDecidedAskTau: number | null;
+  lastSkipReason: SkipReason | null;
+  traded: boolean;
+}
+
+const emptySummary = (): WindowSummary => ({
+  decidedSeconds: 0,
+  firstDecidedTau: null,
+  decidedSide: null,
+  minDecidedAsk: null,
+  minDecidedAskTau: null,
+  lastSkipReason: null,
+  traded: false,
+});
 
 interface OpenPosition {
   tradeId: string;
@@ -148,8 +176,8 @@ export class MarketOrchestrator extends EventEmitter {
         label: WINDOW_CONFIG.label,
         twapLookbackSeconds: WINDOW_CONFIG.twapLookbackSeconds,
         entryWindowSec: `${config.strategy.entryWindowCloseSeconds}-${config.strategy.entryWindowOpenSeconds}`,
-        minModelEdge: config.strategy.minModelEdge,
-        minSettlementSigmas: config.strategy.minSettlementSigmas,
+        decidedFloorMultiplier: config.strategy.decidedFloorMultiplier,
+        decidedSdMultiple: config.strategy.decidedSdMultiple,
         positionBudgetUsd: FIXED_POSITION_BUDGET_USD,
       },
       "Starting market orchestrator",
@@ -499,7 +527,7 @@ export class MarketOrchestrator extends EventEmitter {
       btcPriceAtWindowStart: null,
       outcomes,
       lastPrices: {},
-      lastEvaluations: {},
+      summary: emptySummary(),
       subscribedWs: false,
       resolved: false,
       rawMarket: market,
@@ -601,6 +629,8 @@ export class MarketOrchestrator extends EventEmitter {
         rawNow: rawAtAnchor,
         rollingOutMean,
         rawSigma,
+        floorMultiplier: config.strategy.decidedFloorMultiplier,
+        sdMultiple: config.strategy.decidedSdMultiple,
       });
       if (!forecast) continue;
 
@@ -612,13 +642,28 @@ export class MarketOrchestrator extends EventEmitter {
   }
 
   /**
-   * Keep the last decision per market, taken or skipped, so the no-trade cases
-   * form a baseline. Without them there is no way to tell a working filter from
-   * one that simply never fires.
+   * Fold one evaluation into the window's summary. Only the decided side is
+   * interesting: how long the window sat decided, and the cheapest ask the book
+   * offered on that side while it did. That number, across every window traded
+   * or not, is what says whether the price cap is where the opportunities are.
    */
   private recordEvaluation(state: ActiveMarketState, evaluation: Evaluation): void {
+    const s = state.summary;
+    const f = evaluation.forecast;
     if (evaluation.skipReason === "outside_entry_window") return;
-    state.lastEvaluations[evaluation.tokenId] = evaluation;
+    if (f.decidedSide !== evaluation.outcomeLabel) return;
+
+    s.decidedSeconds++;
+    s.decidedSide = f.decidedSide;
+    if (s.firstDecidedTau === null) s.firstDecidedTau = f.secondsToEnd;
+    if (evaluation.bestAsk !== null && evaluation.bestAsk > 0) {
+      if (s.minDecidedAsk === null || evaluation.bestAsk < s.minDecidedAsk) {
+        s.minDecidedAsk = evaluation.bestAsk;
+        s.minDecidedAskTau = f.secondsToEnd;
+      }
+    }
+    s.lastSkipReason = evaluation.skipReason;
+    if (evaluation.skipReason === null) s.traded = true;
   }
 
   /** Lowest executable bid seen while a position is open (observational only). */
@@ -718,6 +763,16 @@ export class MarketOrchestrator extends EventEmitter {
     const config = getConfig();
 
     try {
+      // Polymarket holds taker orders on crypto up/down markets for 250 ms and
+      // revalidates before matching. A stale ask that a maker pulls in that
+      // window is not ours, so the fill must come from the book as it stands
+      // after the hold, not the one that triggered the entry.
+      await sleep(config.strategy.executionLatencyMs);
+      if (this.paused) {
+        this.strategyEngine.releaseMarket(opp.marketId);
+        return;
+      }
+
       const orderbook = this.wsWatcher.getBook(opp.tokenId);
       if (!orderbook || orderbook.asks.length === 0) {
         logger.warn(
@@ -832,8 +887,7 @@ export class MarketOrchestrator extends EventEmitter {
         forecastSettlement: opp.forecast.expected,
         forecastMarginUsd: opp.forecast.margin,
         forecastSdUsd: opp.forecast.sd,
-        modelProb: opp.modelProb,
-        modelEdge: opp.edge,
+        decidedFloorUsd: opp.forecast.floor,
         secondsToEnd: opp.secondsToEnd,
         minPriceDuringPosition: entryBid.toFixed(6),
       });
@@ -878,8 +932,7 @@ export class MarketOrchestrator extends EventEmitter {
           forecastSettlement: opp.forecast.expected,
           forecastMargin: opp.forecast.margin,
           forecastSd: opp.forecast.sd,
-          modelProb: opp.modelProb,
-          modelEdge: opp.edge,
+          decidedFloor: opp.forecast.floor,
           secondsToEnd: opp.secondsToEnd,
           cashRemaining: this.portfolioManager.getCashBalance(),
         },
@@ -905,9 +958,8 @@ export class MarketOrchestrator extends EventEmitter {
           actualCost: actualCost.toFixed(4),
           fees: execution.fees.toFixed(4),
           expectedProfit: expectedProfit.toFixed(4),
-          modelProb: opp.modelProb.toFixed(3),
-          edge: opp.edge.toFixed(3),
           margin: opp.forecast.margin.toFixed(2),
+          floor: opp.forecast.floor.toFixed(2),
           sd: opp.forecast.sd.toFixed(2),
           cashRemaining: this.portfolioManager.getCashBalance().toFixed(2),
         },
@@ -1263,7 +1315,7 @@ export class MarketOrchestrator extends EventEmitter {
         btcPriceAtWindowStart: targetPrice,
         outcomes,
         lastPrices: {},
-        lastEvaluations: {},
+        summary: emptySummary(),
         subscribedWs: false,
         resolved: false,
         rawMarket: row.metadata,
@@ -1374,30 +1426,30 @@ export class MarketOrchestrator extends EventEmitter {
    * round trip.
    */
   private flushEvaluations(state: ActiveMarketState): void {
-    const entries = Object.values(state.lastEvaluations);
-    if (entries.length === 0) return;
+    const s = state.summary;
+    if (s.decidedSeconds === 0 && state.targetPrice === null) return;
 
-    const best = entries.reduce((a, b) => (b.edge > a.edge ? b : a));
+    const verdict = s.traded
+      ? "traded"
+      : s.decidedSeconds === 0
+        ? "never decided"
+        : (s.lastSkipReason ?? "not taken");
     logAudit(
       "info",
       "EVALUATION",
-      `Window ${state.slug ?? state.marketId} closed: ${best.skipReason ?? "traded"}`,
+      `Window ${state.slug ?? state.marketId} closed: ${verdict}`,
       {
         marketId: state.marketId,
         slug: state.slug,
         windowEnd: state.endDate.toISOString(),
         strike: state.targetPrice,
-        sides: entries.map((e) => ({
-          outcome: e.outcomeLabel,
-          ask: round(e.bestAsk),
-          modelProb: round(e.modelProb),
-          edge: round(e.edge),
-          margin: round(e.forecast.margin, 2),
-          sd: round(e.forecast.sd, 2),
-          sigmas: round(e.forecast.sigmas, 2),
-          secondsToEnd: round(e.forecast.secondsToEnd, 1),
-          skipReason: e.skipReason,
-        })),
+        decidedSide: s.decidedSide,
+        decidedSeconds: s.decidedSeconds,
+        firstDecidedTau: s.firstDecidedTau === null ? null : round(s.firstDecidedTau, 1),
+        minDecidedAsk: s.minDecidedAsk === null ? null : round(s.minDecidedAsk),
+        minDecidedAskTau: s.minDecidedAskTau === null ? null : round(s.minDecidedAskTau, 1),
+        lastSkipReason: s.lastSkipReason,
+        traded: s.traded,
       },
     ).catch((err) =>
       logger.error({ err, marketId: state.marketId }, "Failed to log evaluation"),

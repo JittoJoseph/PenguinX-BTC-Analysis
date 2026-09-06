@@ -12,7 +12,7 @@ const logger = createModuleLogger("main");
 async function main(): Promise<void> {
   logger.info("═══════════════════════════════════════════");
   logger.info("  PenguinX BTC Analysis — v4.0");
-  logger.info("  TWAP Roll-Off Strategy — BTC 15-Minute Up/Down");
+  logger.info("  Decided-Window Stale-Liquidity Strategy — BTC 15-Minute Up/Down");
   logger.info("═══════════════════════════════════════════");
 
   const config = getConfig();
@@ -22,8 +22,8 @@ async function main(): Promise<void> {
       twapLookbackSeconds: WINDOW_CONFIG.twapLookbackSeconds,
       entryBand: `${config.strategy.minEntryPrice}–${config.strategy.maxEntryPrice}`,
       entryWindowSec: `${config.strategy.entryWindowCloseSeconds}–${config.strategy.entryWindowOpenSeconds}`,
-      minModelEdge: config.strategy.minModelEdge,
-      minSettlementSigmas: config.strategy.minSettlementSigmas,
+      decidedFloorMultiplier: config.strategy.decidedFloorMultiplier,
+      decidedSdMultiple: config.strategy.decidedSdMultiple,
       sigmaWindowMs: config.strategy.sigmaWindowMs,
       startingCapital: config.portfolio.startingCapital,
       positionBudget: `$${FIXED_POSITION_BUDGET_USD} fixed (simulation)`,

@@ -24,7 +24,7 @@ export interface PerformanceMetrics {
   largestWin: string;
   largestLoss: string;
   totalFees: string;
-  avgModelEdge: string;
+  avgMarginOverFloor: string;
   openPositions: number;
   unrealizedPnl: string;
   /** Current cash balance from portfolio */
@@ -89,8 +89,8 @@ export async function calculatePortfolioPerformance(
   let lossPnlSum = new Decimal(0);
   let largestWin = new Decimal(0);
   let largestLoss = new Decimal(0);
-  let modelEdgeSum = new Decimal(0);
-  let modelEdgeCount = 0;
+  let marginRatioSum = new Decimal(0);
+  let marginRatioCount = 0;
   let openPositions = 0;
   let unrealizedPnl = new Decimal(0);
 
@@ -126,9 +126,14 @@ export async function calculatePortfolioPerformance(
       }
     }
 
-    if (trade.modelEdge) {
-      modelEdgeSum = modelEdgeSum.plus(new Decimal(trade.modelEdge));
-      modelEdgeCount++;
+    if (trade.forecastMarginUsd && trade.decidedFloorUsd) {
+      const floor = new Decimal(trade.decidedFloorUsd);
+      if (floor.gt(0)) {
+        marginRatioSum = marginRatioSum.plus(
+          new Decimal(trade.forecastMarginUsd).abs().div(floor),
+        );
+        marginRatioCount++;
+      }
     }
   }
 
@@ -148,9 +153,9 @@ export async function calculatePortfolioPerformance(
 
   const avgWin = wins > 0 ? winPnlSum.div(wins).toFixed(6) : "0";
   const avgLoss = losses > 0 ? lossPnlSum.div(losses).toFixed(6) : "0";
-  const avgModelEdge =
-    modelEdgeCount > 0
-      ? modelEdgeSum.div(modelEdgeCount).toFixed(4)
+  const avgMarginOverFloor =
+    marginRatioCount > 0
+      ? marginRatioSum.div(marginRatioCount).toFixed(4)
       : "0";
 
   return {
@@ -167,7 +172,7 @@ export async function calculatePortfolioPerformance(
     largestWin: largestWin.toFixed(6),
     largestLoss: largestLoss.toFixed(6),
     totalFees: totalFees.toFixed(6),
-    avgModelEdge,
+    avgMarginOverFloor,
     openPositions,
     unrealizedPnl: unrealizedPnl.toFixed(6),
     cashBalance: cashBalance.toFixed(2),
